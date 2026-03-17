@@ -419,7 +419,90 @@ cmd_list() {
 }
 
 cmd_add() {
-  echo "git-profile add: interactive add not yet implemented." >&2
+  # ── 1. Profile name ──────────────────────────────────────────────────────
+  local name=""
+  while true; do
+    printf "Profile name (letters, digits, hyphens, underscores): "
+    read -r name
+    if ! validate_profile_name "$name" 2>/dev/null; then
+      echo "Invalid profile name. Please try again." >&2
+      continue
+    fi
+    # Check for existing profile
+    local existing_names
+    existing_names="$(list_profile_names)"
+    if echo "$existing_names" | grep -qx "$name"; then
+      printf "Profile '%s' already exists. Overwrite? [y/N] " "$name"
+      read -r overwrite
+      case "$overwrite" in
+        [yY]*) break ;;
+        *) echo "Aborted." >&2; return 1 ;;
+      esac
+    else
+      break
+    fi
+  done
+
+  # ── 2. User name ─────────────────────────────────────────────────────────
+  local fullname=""
+  while [[ -z "$fullname" ]]; do
+    printf "Full name (e.g. Jane Smith): "
+    read -r fullname
+    if [[ -z "$fullname" ]]; then
+      echo "Name cannot be empty." >&2
+    fi
+  done
+
+  # ── 3. Email ─────────────────────────────────────────────────────────────
+  local email=""
+  while [[ -z "$email" ]]; do
+    printf "Email address: "
+    read -r email
+    if [[ -z "$email" ]]; then
+      echo "Email cannot be empty." >&2
+    fi
+  done
+
+  # ── 4. Host ───────────────────────────────────────────────────────────────
+  local host=""
+  while [[ -z "$host" ]]; do
+    printf "Git host (e.g. github.com): "
+    read -r host
+    if [[ -z "$host" ]]; then
+      echo "Host cannot be empty." >&2
+    fi
+  done
+
+  # ── 5. SSH key: generate new or use existing ──────────────────────────────
+  printf "Generate a new SSH key? [Y/n] "
+  read -r gen_key
+  case "$gen_key" in
+    [nN]*)
+      # Use existing key
+      local key_path=""
+      while [[ -z "$key_path" ]]; do
+        printf "Path to existing SSH private key: "
+        read -r key_path
+        if [[ -z "$key_path" ]]; then
+          echo "Key path cannot be empty." >&2
+        elif [[ ! -f "$key_path" ]]; then
+          echo "File not found: ${key_path}" >&2
+          key_path=""
+        fi
+      done
+      _add_profile "$name" "$fullname" "$email" "$host" "$key_path"
+      ;;
+    *)
+      # Generate new key — ask for algorithm
+      printf "Key algorithm (ed25519/rsa) [ed25519]: "
+      read -r algorithm
+      algorithm="${algorithm:-ed25519}"
+      _add_profile_with_keygen "$name" "$fullname" "$email" "$host" "$algorithm"
+      ;;
+  esac
+
+  echo ""
+  echo "Profile '${name}' added successfully."
 }
 
 cmd_edit() {
