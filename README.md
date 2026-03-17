@@ -273,7 +273,7 @@ Effective config:
 
 ### 场景九：管理远程 URL（HTTPS ↔ SSH 转换）
 
-当仓库 remote 使用 HTTPS URL 时，SSH 密钥不会生效。`git-profile` 可以自动转换：
+当仓库 remote 使用 HTTPS URL 时，SSH 密钥不会生效。`git-profile` 现在支持直接修改 remote URL，也支持在 HTTPS 和 SSH 之间自动转换：
 
 ```bash
 # 查看当前仓库的远程 URL
@@ -282,6 +282,14 @@ Remote URLs:
   (active profile: personal)
 
   origin  https://github.com/user/repo.git  [HTTPS]
+
+# 直接修改 origin 的 URL
+$ git-profile remote set git@gitlab.company.com:team/project.git
+Updated remote 'origin' to git@gitlab.company.com:team/project.git
+
+# 修改指定 remote 的 URL
+$ git-profile remote set upstream https://github.com/company/project.git
+Updated remote 'upstream' to https://github.com/company/project.git
 
 # 转换为 SSH 格式
 $ git-profile remote set-ssh
@@ -379,6 +387,8 @@ Git Profile Manager
 | `git-profile use --clear` | 撤销 use 覆盖，恢复原始配置 |
 | `git-profile current` | 查看当前项目生效的身份 |
 | `git-profile remote` | 查看远程 URL |
+| `git-profile remote set <url>` | 直接修改 `origin` 的远程 URL |
+| `git-profile remote set <remote> <url>` | 直接修改指定 remote 的 URL |
 | `git-profile remote set-ssh` | 转换远程 URL 为 SSH 格式 |
 | `git-profile remote set-https` | 转换远程 URL 为 HTTPS 格式 |
 | `git-profile edit <name>` | 修改已有身份 |

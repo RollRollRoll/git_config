@@ -53,7 +53,7 @@ Subcommands:
   remove <profile>         Remove a profile
   use <profile>            Apply a profile to the current repository
   show [profile]           Show profile details
-  remote [show|set-ssh|set-https]
+  remote [show|set|set-ssh|set-https]
                            Manage remote URLs (HTTPS ↔ SSH conversion)
   rule [add|list|remove]   Manage auto-apply rules
   install                  Install shell integration and SSH config
@@ -1128,11 +1128,24 @@ cmd_current() {
 
 # ── Remote URL management ─────────────────────────────────────────────────────
 
-cmd_remote_show() {
+require_git_repo() {
   if ! git rev-parse --is-inside-work-tree &>/dev/null; then
     echo "git-profile: not inside a git repository." >&2
     exit 1
   fi
+}
+
+remote_exists() {
+  local remote_name="$1"
+  git remote get-url "$remote_name" &>/dev/null
+}
+
+list_fetch_remotes() {
+  git remote -v 2>/dev/null | awk '$3 == "(fetch)" { print $1 "\t" $2 }'
+}
+
+cmd_remote_show() {
+  require_git_repo
 
   local profile_name
   profile_name="$(git config gitProfile.name 2>/dev/null || true)"
@@ -1145,15 +1158,7 @@ cmd_remote_show() {
 
   local found=0
   local remote_name remote_url proto_label
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    remote_name="$(echo "$line" | awk '{print $1}')"
-    remote_url="$(echo "$line" | awk '{print $2}')"
-    local direction
-    direction="$(echo "$line" | awk '{print $3}')"
-    # Only show fetch URLs to avoid duplicates
-    [[ "$direction" != "(fetch)" ]] && continue
-
+  while IFS=$'\t' read -r remote_name remote_url; do
     if [[ "$remote_url" == https://* ]]; then
       proto_label="[HTTPS]"
     elif [[ "$remote_url" == git@* ]]; then
@@ -1166,18 +1171,48 @@ cmd_remote_show() {
 
     echo "  ${remote_name}  ${remote_url}  ${proto_label}"
     found=1
-  done < <(git remote -v 2>/dev/null)
+  done < <(list_fetch_remotes)
 
   if [[ "$found" -eq 0 ]]; then
     echo "  (no remotes configured)"
   fi
 }
 
+cmd_remote_set() {
+  require_git_repo
+
+  local target_remote new_url
+  case "$#" in
+    1)
+      target_remote="origin"
+      new_url="$1"
+      ;;
+    2)
+      target_remote="$1"
+      new_url="$2"
+      ;;
+    *)
+      echo "Usage: git-profile remote set [remote-name] <url>" >&2
+      exit 1
+      ;;
+  esac
+
+  if ! remote_exists "$target_remote"; then
+    echo "git-profile: remote '${target_remote}' not found." >&2
+    exit 1
+  fi
+
+  git remote set-url "$target_remote" "$new_url"
+  echo "Updated remote '${target_remote}' to ${new_url}"
+}
+
 cmd_remote_set_ssh() {
   local target_remote="${1:-}"
 
-  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-    echo "git-profile: not inside a git repository." >&2
+  require_git_repo
+
+  if [[ -n "$target_remote" ]] && ! remote_exists "$target_remote"; then
+    echo "git-profile: remote '${target_remote}' not found." >&2
     exit 1
   fi
 
@@ -1201,26 +1236,19 @@ cmd_remote_set_ssh() {
   local remotes_to_convert=""
   local count=0
   local remote_name remote_url
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    remote_name="$(echo "$line" | awk '{print $1}')"
-    remote_url="$(echo "$line" | awk '{print $2}')"
-    local direction
-    direction="$(echo "$line" | awk '{print $3}')"
-    [[ "$direction" != "(fetch)" ]] && continue
-
+  while IFS=$'\t' read -r remote_name remote_url; do
     # Filter by target remote if specified
     if [[ -n "$target_remote" && "$remote_name" != "$target_remote" ]]; then
       continue
     fi
 
     if [[ "$remote_url" == https://* ]]; then
-      remotes_to_convert="${remotes_to_convert}${remote_name} ${remote_url}"$'\n'
+      remotes_to_convert="${remotes_to_convert}${remote_name}"$'\t'"${remote_url}"$'\n'
       count=$((count + 1))
     elif [[ "$remote_url" == ssh://* ]]; then
       echo "Skipping '${remote_name}': unsupported URL format (ssh://)" >&2
     fi
-  done < <(git remote -v 2>/dev/null)
+  done < <(list_fetch_remotes)
 
   if [[ "$count" -eq 0 ]]; then
     echo "All remotes are already using SSH."
@@ -1232,8 +1260,7 @@ cmd_remote_set_ssh() {
   local new_url
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
-    remote_name="${entry%% *}"
-    remote_url="${entry#* }"
+    IFS=$'\t' read -r remote_name remote_url <<< "$entry"
     new_url="$(url_https_to_ssh "$remote_url" "$ssh_host")"
     echo "  ${remote_name}: ${remote_url} → ${new_url}"
   done <<< "$remotes_to_convert"
@@ -1252,8 +1279,7 @@ cmd_remote_set_ssh() {
   # Execute
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
-    remote_name="${entry%% *}"
-    remote_url="${entry#* }"
+    IFS=$'\t' read -r remote_name remote_url <<< "$entry"
     new_url="$(url_https_to_ssh "$remote_url" "$ssh_host")"
     git remote set-url "$remote_name" "$new_url"
   done <<< "$remotes_to_convert"
@@ -1264,8 +1290,10 @@ cmd_remote_set_ssh() {
 cmd_remote_set_https() {
   local target_remote="${1:-}"
 
-  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-    echo "git-profile: not inside a git repository." >&2
+  require_git_repo
+
+  if [[ -n "$target_remote" ]] && ! remote_exists "$target_remote"; then
+    echo "git-profile: remote '${target_remote}' not found." >&2
     exit 1
   fi
 
@@ -1289,26 +1317,19 @@ cmd_remote_set_https() {
   local remotes_to_convert=""
   local count=0
   local remote_name remote_url
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    remote_name="$(echo "$line" | awk '{print $1}')"
-    remote_url="$(echo "$line" | awk '{print $2}')"
-    local direction
-    direction="$(echo "$line" | awk '{print $3}')"
-    [[ "$direction" != "(fetch)" ]] && continue
-
+  while IFS=$'\t' read -r remote_name remote_url; do
     # Filter by target remote if specified
     if [[ -n "$target_remote" && "$remote_name" != "$target_remote" ]]; then
       continue
     fi
 
     if [[ "$remote_url" == git@* ]]; then
-      remotes_to_convert="${remotes_to_convert}${remote_name} ${remote_url}"$'\n'
+      remotes_to_convert="${remotes_to_convert}${remote_name}"$'\t'"${remote_url}"$'\n'
       count=$((count + 1))
     elif [[ "$remote_url" == ssh://* ]]; then
       echo "Skipping '${remote_name}': unsupported URL format (ssh://)" >&2
     fi
-  done < <(git remote -v 2>/dev/null)
+  done < <(list_fetch_remotes)
 
   if [[ "$count" -eq 0 ]]; then
     echo "All remotes are already using HTTPS."
@@ -1320,8 +1341,7 @@ cmd_remote_set_https() {
   local new_url
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
-    remote_name="${entry%% *}"
-    remote_url="${entry#* }"
+    IFS=$'\t' read -r remote_name remote_url <<< "$entry"
     new_url="$(url_ssh_to_https "$remote_url" "$real_host")"
     echo "  ${remote_name}: ${remote_url} → ${new_url}"
   done <<< "$remotes_to_convert"
@@ -1340,8 +1360,7 @@ cmd_remote_set_https() {
   # Execute
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
-    remote_name="${entry%% *}"
-    remote_url="${entry#* }"
+    IFS=$'\t' read -r remote_name remote_url <<< "$entry"
     new_url="$(url_ssh_to_https "$remote_url" "$real_host")"
     git remote set-url "$remote_name" "$new_url"
   done <<< "$remotes_to_convert"
@@ -1353,9 +1372,10 @@ cmd_remote() {
   local sub="${1:-}"
   case "$sub" in
     show|"")   cmd_remote_show ;;
+    set)       shift; cmd_remote_set "$@" ;;
     set-ssh)   shift; cmd_remote_set_ssh "$@" ;;
     set-https) shift; cmd_remote_set_https "$@" ;;
-    *)         echo "Usage: git-profile remote [show|set-ssh|set-https]" >&2; exit 1 ;;
+    *)         echo "Usage: git-profile remote [show|set|set-ssh|set-https]" >&2; exit 1 ;;
   esac
 }
 
@@ -1646,15 +1666,23 @@ interactive_remote_menu() {
   echo "Remote URL Management"
   echo "━━━━━━━━━━━━━━━━━━━━━━"
   echo "1) 查看远程 URL"
-  echo "2) 转换为 SSH"
-  echo "3) 转换为 HTTPS"
+  echo "2) 设置远程 URL"
+  echo "3) 转换为 SSH"
+  echo "4) 转换为 HTTPS"
   echo "0) 返回"
   echo ""
   read -rp "请选择: " choice
   case "$choice" in
     1) cmd_remote_show ;;
-    2) cmd_remote_set_ssh ;;
-    3) cmd_remote_set_https ;;
+    2)
+      local remote_name new_url
+      read -rp "Remote 名称（默认: origin）: " remote_name
+      [[ -n "$remote_name" ]] || remote_name="origin"
+      read -rp "新的 remote URL: " new_url
+      cmd_remote_set "$remote_name" "$new_url"
+      ;;
+    3) cmd_remote_set_ssh ;;
+    4) cmd_remote_set_https ;;
     0) return ;;
     *) echo "Invalid choice." ;;
   esac

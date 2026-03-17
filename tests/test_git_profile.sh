@@ -781,6 +781,69 @@ EOF
   teardown_test_home
 }
 
+test_remote_set_default_origin() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+
+  local output exit_code=0
+  output="$(cd "$repo" && "$GIT_PROFILE" remote set "git@gitlab.com:team/new.git" 2>&1)" || exit_code=$?
+
+  local new_url
+  new_url="$(cd "$repo" && git remote get-url origin)"
+  assert_exit_code "remote set default origin exits zero" "0" "$exit_code"
+  assert_eq "remote set defaults to origin" "git@gitlab.com:team/new.git" "$new_url"
+  teardown_test_home
+}
+
+test_remote_set_specific_remote() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+  (cd "$repo" && git remote add upstream "https://github.com/org/repo.git")
+
+  local output exit_code=0
+  output="$(cd "$repo" && "$GIT_PROFILE" remote set upstream "git@gitlab.com:team/upstream.git" 2>&1)" || exit_code=$?
+
+  local origin_url upstream_url
+  origin_url="$(cd "$repo" && git remote get-url origin)"
+  upstream_url="$(cd "$repo" && git remote get-url upstream)"
+  assert_exit_code "remote set specific remote exits zero" "0" "$exit_code"
+  assert_eq "remote set keeps origin unchanged" "https://github.com/user/repo.git" "$origin_url"
+  assert_eq "remote set updates target remote" "git@gitlab.com:team/upstream.git" "$upstream_url"
+  teardown_test_home
+}
+
+test_remote_set_missing_remote() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+
+  local output exit_code=0
+  output="$(cd "$repo" && "$GIT_PROFILE" remote set upstream "git@gitlab.com:team/upstream.git" 2>&1)" || exit_code=$?
+
+  assert_exit_code "remote set missing remote exits non-zero" "1" "$exit_code"
+  assert_contains "remote set missing remote shows clear error" "remote 'upstream' not found" "$output"
+  teardown_test_home
+}
+
+test_remote_set_missing_url() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+
+  local output exit_code=0
+  output="$(cd "$repo" && "$GIT_PROFILE" remote set 2>&1)" || exit_code=$?
+
+  assert_exit_code "remote set missing URL exits non-zero" "1" "$exit_code"
+  assert_contains "remote set missing URL shows usage" "git-profile remote set [remote-name] <url>" "$output"
+  teardown_test_home
+}
+
 test_remote_set_https() {
   setup_test_home
   local repo="$TEST_HOME/myrepo"
@@ -802,6 +865,58 @@ EOF
   local new_url
   new_url="$(cd "$repo" && git remote get-url origin)"
   assert_eq "remote set-https converts URL" "https://github.com/user/repo.git" "$new_url"
+  teardown_test_home
+}
+
+test_remote_set_ssh_single_remote() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+  (cd "$repo" && git remote add upstream "https://github.com/org/repo.git")
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=n CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-ssh upstream)
+
+  local origin_url upstream_url
+  origin_url="$(cd "$repo" && git remote get-url origin)"
+  upstream_url="$(cd "$repo" && git remote get-url upstream)"
+  assert_eq "remote set-ssh single keeps origin unchanged" "https://github.com/user/repo.git" "$origin_url"
+  assert_eq "remote set-ssh single converts target" "git@github.com:org/repo.git" "$upstream_url"
+  teardown_test_home
+}
+
+test_remote_set_ssh_missing_remote() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=n CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+
+  local output exit_code=0
+  output="$(cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-ssh upstream 2>&1)" || exit_code=$?
+
+  assert_exit_code "remote set-ssh missing remote exits non-zero" "1" "$exit_code"
+  assert_contains "remote set-ssh missing remote shows clear error" "remote 'upstream' not found" "$output"
   teardown_test_home
 }
 
@@ -880,10 +995,70 @@ EOF
   teardown_test_home
 }
 
+test_remote_set_https_single_remote() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "git@github.com:user/repo.git")
+  (cd "$repo" && git remote add upstream "git@github.com:org/repo.git")
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-https upstream)
+
+  local origin_url upstream_url
+  origin_url="$(cd "$repo" && git remote get-url origin)"
+  upstream_url="$(cd "$repo" && git remote get-url upstream)"
+  assert_eq "remote set-https single keeps origin unchanged" "git@github.com:user/repo.git" "$origin_url"
+  assert_eq "remote set-https single converts target" "https://github.com/org/repo.git" "$upstream_url"
+  teardown_test_home
+}
+
+test_remote_set_https_missing_remote() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "git@github.com:user/repo.git")
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+
+  local output exit_code=0
+  output="$(cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-https upstream 2>&1)" || exit_code=$?
+
+  assert_exit_code "remote set-https missing remote exits non-zero" "1" "$exit_code"
+  assert_contains "remote set-https missing remote shows clear error" "remote 'upstream' not found" "$output"
+  teardown_test_home
+}
+
+test_remote_set_default_origin
+test_remote_set_specific_remote
+test_remote_set_missing_remote
+test_remote_set_missing_url
 test_remote_set_ssh
 test_remote_set_https
+test_remote_set_ssh_single_remote
+test_remote_set_ssh_missing_remote
 test_remote_set_ssh_multi_remotes
 test_remote_show_output
 test_remote_set_ssh_already_ssh
+test_remote_set_https_single_remote
+test_remote_set_https_missing_remote
 
 report
