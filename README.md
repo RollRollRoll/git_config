@@ -35,25 +35,25 @@
 
 ```ini
 [personal]
-name = kgfan
-email = kgfan@gmail.com
+name = li
+email = li@gmail.com
 host = github.com
 ssh_key = ~/.ssh/git_profile_personal
 
 [work]
-name = Chen Jinfan
-email = jinfan.chen@company.com
+name = Li Jin
+email = jin.li@company.com
 host = gitlab.company.com
 ssh_key = ~/.ssh/git_profile_work
 
 [github-work]
-name = jinfan-work
-email = jinfan@work.com
+name = lijin-work
+email = lijin@work.com
 host = github.com
 ssh_key = ~/.ssh/git_profile_github-work
 
 [rule "work-projects"]
-dir = /Users/chenjinfan/Project/work/
+dir = /Users/lijin/Project/work/
 profile = work
 ```
 
@@ -98,8 +98,8 @@ $ git-profile add
 === Add New Profile ===
 
 Profile name (e.g., personal, work): personal
-User name: kgfan
-Email: kgfan@gmail.com
+User name: lijin
+Email: lijin@gmail.com
 Git platform host (e.g., github.com): github.com
 Generate a new SSH key? [Y/n]: Y
 Key algorithm [ed25519/rsa] (default: ed25519):
@@ -108,7 +108,7 @@ Generating public/private ed25519 key pair.
 
 Public key (add this to your Git platform):
 ---
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... kgfan@gmail.com
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... lijin@gmail.com
 ---
 
 Profile 'personal' added successfully.
@@ -122,8 +122,8 @@ Profile 'personal' added successfully.
 $ git-profile add
 
 Profile name: work
-User name: Chen Jinfan
-Email: jinfan.chen@company.com
+User name: lijin
+Email: lijin@company.com
 Git platform host: gitlab.company.com
 Generate a new SSH key? [Y/n]: Y
 
@@ -166,20 +166,20 @@ $ git-profile list
 Configured profiles:
 
   [personal]
-    Name:  kgfan
-    Email: kgfan@gmail.com
+    Name:  lijin
+    Email: lijin@gmail.com
     Host:  github.com
     Key:   ~/.ssh/git_profile_personal
 
   [work]
-    Name:  Chen Jinfan
-    Email: jinfan.chen@company.com
+    Name:  jin li
+    Email: jin.li@company.com
     Host:  gitlab.company.com
     Key:   ~/.ssh/git_profile_work
 
   [github-work]
-    Name:  jinfan-work
-    Email: jinfan@work.com
+    Name:  li-work
+    Email: li@work.com
     Host:  github.com
     Key:   ~/.ssh/git_profile_github-work
 ```
@@ -191,9 +191,9 @@ $ cd ~/Project/my-open-source-lib
 $ git-profile use personal
 
 Switched to profile 'personal' in this repository.
-  Name:  kgfan
-  Email: kgfan@gmail.com
-  Key:   /Users/chenjinfan/.ssh/git_profile_personal
+  Name:  lijin
+  Email: lijin@gmail.com
+  Key:   /Users/lijin/.ssh/git_profile_personal
 ```
 
 验证配置已生效：
@@ -202,8 +202,8 @@ Switched to profile 'personal' in this repository.
 $ git-profile current
 
 Current Git Profile: personal
-  Name:   kgfan
-  Email:  kgfan@gmail.com
+  Name:   lijin
+  Email:  lijin@gmail.com
   Host:   github.com
   Key:    ~/.ssh/git_profile_personal
   Source: project config
@@ -220,7 +220,7 @@ $ git-profile rule add
 
 Rule name: work-projects
 Directory path: ~/Project/work/
-Normalized path: /Users/chenjinfan/Project/work/
+Normalized path: /Users/lijin/Project/work/
 Confirm this path? [Y/n]: Y
 
 Available profiles:
@@ -229,7 +229,7 @@ Available profiles:
 Select profile number: 2
 
 Rule 'work-projects' added.
-  Directory: /Users/chenjinfan/Project/work/
+  Directory: /Users/lijin/Project/work/
   Profile:   work
 ```
 
@@ -243,7 +243,7 @@ $ git-profile rule list
 Directory rules:
 
   [work-projects]
-    Directory: /Users/chenjinfan/Project/work/
+    Directory: /Users/lijin/Project/work/
     Profile:   work
 ```
 
@@ -267,8 +267,8 @@ $ git-profile use --clear
 Cleared profile override for this repository.
 
 Effective config:
-  user.name  = Chen Jinfan
-  user.email = jinfan.chen@company.com
+  user.name  = lijin
+  user.email = lijin@company.com
 ```
 
 ### 场景九：修改已有身份
@@ -278,8 +278,8 @@ $ git-profile edit work
 
 Editing profile 'work' (press Enter to keep current value):
 
-  Name [Chen Jinfan]:
-  Email [jinfan.chen@company.com]: jinfan@newcompany.com
+  Name [lijin]:
+  Email [lijin.chen@company.com]: lijin@newcompany.com
   Host [gitlab.company.com]:
   SSH Key [~/.ssh/git_profile_work]:
 
@@ -297,8 +297,8 @@ Profile 'github-work' is referenced by these rules:
   - github-work-rule
 Delete these rules as well? [Y/n]: Y
 
-Delete SSH key '/Users/chenjinfan/.ssh/git_profile_github-work'? [y/N]: y
-Delete gitconfig fragment '/Users/chenjinfan/.gitconfig.d/github-work'? [y/N]: y
+Delete SSH key '/Users/lijin/.ssh/git_profile_github-work'? [y/N]: y
+Delete gitconfig fragment '/Users/lijin/.gitconfig.d/github-work'? [y/N]: y
 
 Profile 'github-work' removed.
 ```
