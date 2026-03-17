@@ -73,6 +73,7 @@ profile = work
 | `list` | 列出所有已配置的身份 | `git-profile list` |
 | `use <name>` | 在当前项目应用指定身份 | `git-profile use work` |
 | `use` | 无参数时列出身份让用户选择 | `git-profile use` |
+| `use --clear` | 清除项目级配置，恢复到目录规则/全局配置 | `git-profile use --clear` |
 | `rule add` | 添加目录自动匹配规则 | `git-profile rule add` |
 | `rule list` | 查看已有目录规则 | `git-profile rule list` |
 | `rule remove` | 删除目录规则 | `git-profile rule remove` |
@@ -88,9 +89,10 @@ Git Profile Manager
 2) 修改身份
 3) 查看所有身份
 4) 切换当前项目身份
-5) 管理目录规则
-6) 查看当前身份
-7) 删除身份
+5) 清除当前项目身份（恢复目录规则）
+6) 管理目录规则
+7) 查看当前身份
+8) 删除身份
 0) 退出
 
 请选择:
@@ -102,10 +104,22 @@ Git Profile Manager
 
 采用 `core.sshCommand` 作为主要方案：
 
-- **`use` 命令**和**目录规则（includeIf）**统一通过 `core.sshCommand = "ssh -i <key_path>"` 指定密钥
-- **SSH config Host 别名**仅在 `add` 时为同平台多账号自动配置，作为补充手段（方便用户手动 `git clone` 时使用正确的别名 URL）
-- `use` 命令不再自动修改 remote URL，因为 `core.sshCommand` 已足够解决密钥选择问题
+- **`use` 命令**和**目录规则（includeIf）**统一通过 `core.sshCommand = "ssh -i <key_path> -o IdentitiesOnly=yes"` 指定密钥
+  - `-o IdentitiesOnly=yes` 防止 OpenSSH 继续尝试 ssh-agent 或其他默认密钥，避免多密钥环境下串号或触发认证次数上限
+- **SSH config Host 别名**仅在同平台多账号场景下按需生成，且需用户确认后才写入（方便用户手动 `git clone` 时使用正确的别名 URL）
+- **单账号场景不写入 `~/.ssh/config`**，避免侵入用户已有 SSH 策略。`core.sshCommand` 已足够解决密钥选择
+- `use` 命令不自动修改 remote URL，因为 `core.sshCommand` 已足够解决密钥选择问题
 - 如用户的 remote URL 已使用 Host 别名格式，`core.sshCommand` 和 Host 别名可共存无冲突
+
+### use 与 rule 的优先级模型
+
+Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`。
+
+这意味着一旦 `use` 写入项目级配置，目录规则就会被"压住"。为此引入以下机制：
+
+- **`use --clear`** — 清除当前项目的 git-profile 相关配置（`user.name`、`user.email`、`core.sshCommand`），让目录规则重新生效
+- **`use` 执行时的提示** — 如果检测到当前项目已在某条目录规则的覆盖范围内，显示提示："当前目录已匹配规则 `<rule_name>` (身份: `<profile>`)，`use` 会覆盖该规则。如需恢复，运行 `git-profile use --clear`"
+- **`current` 输出中体现覆盖关系** — 当项目级配置覆盖了 includeIf 规则时，在 Source 字段标注，如 `Source: project config (overrides rule: work-projects)`
 
 ### add 流程
 
@@ -118,8 +132,8 @@ Git Profile Manager
    - 是 → 选择算法（默认 ed25519，可选 rsa），`ssh-keygen` 生成到 `~/.ssh/git_profile_<身份名>`，显示公钥供用户添加到平台
    - 否 → 输入已有密钥路径
 7. 检测同平台多账号（配置文件中已有相同 host 的身份）
-   - 是 → 在 `~/.ssh/config` 添加 Host 别名条目（如 `Host github.com-work`），用 `# git-profile: <name>` 注释标记
-   - 否 → 在 `~/.ssh/config` 添加标准 Host 条目，同样用注释标记
+   - 是 → 提示用户确认后，在 `~/.ssh/config` 添加 Host 别名条目（如 `Host github.com-work`），用 `# git-profile: <name>` 注释标记，并显示别名 URL 使用示例
+   - 否 → 不写入 `~/.ssh/config`（单账号场景由 `core.sshCommand` 全权处理）
 8. 保存身份到 `~/.git-profiles.conf`
 9. 显示添加成功摘要
 
@@ -132,14 +146,27 @@ Git Profile Manager
 
 ### use 流程
 
+`git-profile use <name>` — 将指定身份应用到当前项目。
+
 1. 检测当前目录是否为 git 仓库，否则提示退出
 2. 读取身份信息
-3. 设置当前项目 git config：
+3. 检测当前目录是否在某条目录规则覆盖范围内，如果是则提示：
+   > 当前目录已匹配规则 "work-projects" (身份: work)，use 会覆盖该规则。如需恢复，运行 git-profile use --clear
+4. 设置当前项目 git config：
    - `git config user.name "xxx"`
    - `git config user.email "xxx"`
-   - `git config core.sshCommand "ssh -i <key_path>"`
-4. 检测 remote URL 协议类型，如果是 HTTPS 则提示"SSH 配置不影响 HTTPS remote，是否转换为 SSH URL？"
-5. 显示配置结果摘要
+   - `git config core.sshCommand "ssh -i <key_path> -o IdentitiesOnly=yes"`
+5. 检测 remote URL 协议类型，如果是 HTTPS 则提示"SSH 配置不影响 HTTPS remote，是否转换为 SSH URL？"
+6. 显示配置结果摘要
+
+`git-profile use --clear` — 清除当前项目的 git-profile 相关配置，恢复到目录规则或全局配置。
+
+1. 检测当前目录是否为 git 仓库
+2. 执行：
+   - `git config --unset user.name`
+   - `git config --unset user.email`
+   - `git config --unset core.sshCommand`
+3. 显示清除结果，并提示当前生效的配置来源（includeIf 规则 / 全局配置）
 
 ### current 流程
 
@@ -154,7 +181,12 @@ Current Git Profile: work
   Source: project config (.git/config)
 ```
 
-`Source` 标明配置来源：project config / includeIf rule / global config / 未配置。
+`Source` 标明配置来源：
+- `project config` — 由 `use` 命令写入
+- `project config (overrides rule: work-projects)` — 项目级配置覆盖了目录规则
+- `includeIf rule: work-projects` — 由目录规则生效
+- `global config` — 全局配置
+- `未配置`
 
 ### rule add 流程
 
@@ -167,7 +199,7 @@ Current Git Profile: work
      name = xxx
      email = xxx
    [core]
-     sshCommand = ssh -i <key_path>
+     sshCommand = ssh -i <key_path> -o IdentitiesOnly=yes
    ```
 5. 使用 `git config --global` 命令写入 includeIf：
    ```
@@ -207,7 +239,7 @@ git_config/
 | 文件 | 用途 |
 |------|------|
 | `~/.git-profiles.conf` | 身份配置中心 |
-| `~/.ssh/config` | SSH Host 别名配置（条目用 `# git-profile: <name>` 标记） |
+| `~/.ssh/config` | 仅同平台多账号时写入 Host 别名（条目用 `# git-profile: <name>` 标记） |
 | `~/.ssh/git_profile_<name>` | 各身份的 SSH 密钥 |
 | `~/.gitconfig` | includeIf 规则写入处（通过 `git config --global` 操作） |
 | `~/.gitconfig.d/<name>` | 各身份的 git 配置片段 |
@@ -230,7 +262,8 @@ git_config/
 - **身份名重复** — 提示是否覆盖
 - **身份名非法字符** — 校验仅允许 `[a-zA-Z0-9_-]`
 - **密钥文件已存在** — 提示跳过或覆盖
-- **SSH config 重复 Host** — 添加前通过注释标记检测避免重复
+- **SSH config 重复 Host** — 仅同平台多账号写入，添加前通过注释标记检测避免重复
+- **use 覆盖目录规则** — 提示用户并告知 `use --clear` 恢复方式
 - **includeIf 已存在** — 检测避免重复
 - **删除身份时级联清理** — 检查 rules 引用并提示一并删除
 - **HTTPS remote** — `use` 时检测并提示用户是否转换为 SSH URL
