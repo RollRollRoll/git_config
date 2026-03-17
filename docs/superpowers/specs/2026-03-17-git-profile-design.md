@@ -117,7 +117,17 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 
 这意味着一旦 `use` 写入项目级配置，目录规则就会被"压住"。为此引入以下机制：
 
-- **`use --clear`** — 清除当前项目的 git-profile 相关配置（`user.name`、`user.email`、`core.sshCommand`），让目录规则重新生效
+- **`use` 写入前备份** — 在覆盖前，将当前项目级 `user.name`、`user.email`、`core.sshCommand` 的本地值（如果存在）保存到 git config 的自定义 section：
+  ```
+  git config gitProfile.backup.userName "原值"
+  git config gitProfile.backup.userEmail "原值"
+  git config gitProfile.backup.sshCommand "原值"
+  ```
+  如果某个键本地不存在，不写入对应 backup 键（表示"原本就没有"）
+- **`use --clear` 恢复逻辑** — 读取 backup 值：
+  - backup 键存在 → 恢复为备份值
+  - backup 键不存在 → `--unset` 该键（恢复到 rule/global）
+  - 最后清除所有 `gitProfile.*` 键
 - **`use` 执行时的提示** — 如果检测到当前项目已在某条目录规则的覆盖范围内，显示提示："当前目录已匹配规则 `<rule_name>` (身份: `<profile>`)，`use` 会覆盖该规则。如需恢复，运行 `git-profile use --clear`"
 - **`current` 输出中体现覆盖关系** — 当项目级配置覆盖了 includeIf 规则时，在 Source 字段标注，如 `Source: project config (overrides rule: work-projects)`
 
@@ -141,7 +151,10 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 
 1. 读取当前身份信息并展示
 2. 逐字段提示修改（回车跳过保持不变）
-3. 如修改了 host 或 ssh_key，同步更新 SSH config 条目和 gitconfig.d 片段
+3. 同步更新派生文件（任一字段变化都触发）：
+   - **name / email / ssh_key 变化** → 重写该身份关联的所有 `~/.gitconfig.d/<name>` 片段（因为片段中包含 user.name、user.email、core.sshCommand）
+   - **host 变化** → 更新 SSH config 中的 Host 别名条目（如有）
+   - **ssh_key 变化** → 同时更新 SSH config 条目中的 IdentityFile
 4. 显示修改结果摘要
 
 ### use 流程
@@ -152,23 +165,34 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 2. 读取身份信息
 3. 检测当前目录是否在某条目录规则覆盖范围内，如果是则提示：
    > 当前目录已匹配规则 "work-projects" (身份: work)，use 会覆盖该规则。如需恢复，运行 git-profile use --clear
-4. 设置当前项目 git config：
+4. 备份当前项目级本地值（如果存在），写入 `gitProfile.backup.*`（详见"use 与 rule 的优先级模型"）
+5. 设置当前项目 git config：
+   - `git config gitProfile.name "<profile_name>"` — 显式标记当前使用的 profile
    - `git config user.name "xxx"`
    - `git config user.email "xxx"`
    - `git config core.sshCommand "ssh -i <key_path> -o IdentitiesOnly=yes"`
-5. 检测 remote URL 协议类型，如果是 HTTPS 则提示"SSH 配置不影响 HTTPS remote，是否转换为 SSH URL？"
-6. 显示配置结果摘要
+6. 检测 remote URL 协议类型，如果是 HTTPS 则提示"SSH 配置不影响 HTTPS remote，是否转换为 SSH URL？"
+7. 显示配置结果摘要
 
-`git-profile use --clear` — 清除当前项目的 git-profile 相关配置，恢复到目录规则或全局配置。
+`git-profile use --clear` — 恢复当前项目的 git 配置到 `use` 之前的状态。
 
 1. 检测当前目录是否为 git 仓库
-2. 执行：
-   - `git config --unset user.name`
-   - `git config --unset user.email`
-   - `git config --unset core.sshCommand`
-3. 显示清除结果，并提示当前生效的配置来源（includeIf 规则 / 全局配置）
+2. 读取 `gitProfile.backup.*` 键：
+   - `gitProfile.backup.userName` 存在 → `git config user.name "<backup_value>"`
+   - `gitProfile.backup.userName` 不存在 → `git config --unset user.name`
+   - `gitProfile.backup.userEmail` / `gitProfile.backup.sshCommand` 同理
+3. 清除所有 `gitProfile.*` 键（`gitProfile.name`、`gitProfile.backup.*`）
+4. 显示恢复结果，并提示当前生效的配置来源（原始本地值 / includeIf 规则 / 全局配置）
 
 ### current 流程
+
+通过 `git config gitProfile.name` 获取显式标记的 profile 名称，而非根据 user/email 反向推断。
+
+识别逻辑：
+1. 读取 `git config gitProfile.name`
+2. 如果存在，直接使用该值确定当前 profile
+3. 如果不存在，尝试匹配当前 user.name + user.email 与已知 profiles（作为 fallback，标注为"推断"）
+4. 如果都不匹配，显示当前 git 配置的原始值
 
 输出格式：
 
@@ -191,19 +215,28 @@ Current Git Profile: work
 ### rule add 流程
 
 1. 输入目录路径（如 `~/Project/work/`）
-2. 选择关联身份
-3. 保存到 `~/.git-profiles.conf` 的 `[rule "xxx"]` section
-4. 生成 gitconfig 片段文件 `~/.gitconfig.d/<身份名>`，内容：
+2. **路径规范化处理**（在写入前执行）：
+   - `~` 展开为 `$HOME` 绝对路径
+   - 相对路径转换为绝对路径（基于 `pwd`）
+   - 解析符号链接，使用真实路径（`realpath`），因为 `gitdir:` 匹配的是 `.git` 目录的真实位置
+   - 确保尾部以 `/` 结尾（git 的 `gitdir:` 规则中尾部 `/` 表示递归匹配该目录下所有仓库，无 `/` 则精确匹配）
+   - 检查路径是否存在，不存在则警告但允许继续（目录可能尚未创建）
+   - 规范化后的路径显示给用户确认
+3. 选择关联身份
+4. 保存到 `~/.git-profiles.conf` 的 `[rule "xxx"]` section（存储规范化后的绝对路径）
+5. 生成 gitconfig 片段文件 `~/.gitconfig.d/<身份名>`，内容：
    ```ini
+   [gitProfile]
+     name = <身份名>
    [user]
      name = xxx
      email = xxx
    [core]
      sshCommand = ssh -i <key_path> -o IdentitiesOnly=yes
    ```
-5. 使用 `git config --global` 命令写入 includeIf：
+6. 使用 `git config --global` 命令写入 includeIf（路径使用规范化后的绝对路径）：
    ```
-   git config --global includeIf."gitdir:<dir>".path ~/.gitconfig.d/<身份名>
+   git config --global includeIf."gitdir:<normalized_dir>".path ~/.gitconfig.d/<身份名>
    ```
 
 ### rule remove 流程
