@@ -16,6 +16,7 @@
 - **子命令模式** — `git-profile use work`，适合熟练用户和脚本化调用
 - **交互式菜单** — 直接运行 `git-profile`，适合新手或不记得命令时
 - 子命令缺少必要参数时自动进入交互模式
+- 支持 `git-profile --help` 和 `git-profile --version`
 
 ## 配置文件格式
 
@@ -27,30 +28,40 @@
 name = kgfan
 email = 15213243+RollRollRoll@users.noreply.github.com
 host = github.com
-ssh_key = ~/.ssh/id_rsa_github_personal
+ssh_key = ~/.ssh/git_profile_personal
 
 [work]
 name = Chen Jinfan
 email = jinfan.chen@company.com
 host = gitlab.company.com
-ssh_key = ~/.ssh/id_rsa_work
+ssh_key = ~/.ssh/git_profile_work
 
 [github-work]
 name = jinfan-work
 email = jinfan@work.com
 host = github.com
-ssh_key = ~/.ssh/id_rsa_github_work
+ssh_key = ~/.ssh/git_profile_github-work
 
-# 目录规则（自动匹配）
-[rules]
-~/Project/personal/ = personal
-~/Project/work/ = work
+# 目录规则
+[rule "personal-projects"]
+dir = ~/Project/personal/
+profile = personal
+
+[rule "work-projects"]
+dir = ~/Project/work/
+profile = work
 ```
 
-- 每个身份是一个 section，字段：`name`、`email`、`host`、`ssh_key`
+### 语法规则
+
+- 注释行以 `#` 开头，不支持行内注释
+- 键值对格式为 `key = value`，等号两侧空格可选
+- 值不需要引号包裹，取首尾去空白后的整行内容
+- 空行忽略
+- 身份名仅允许 `[a-zA-Z0-9_-]`，不能使用 `rule` 作为前缀
+- 身份 section 格式：`[name]`，字段：`name`、`email`、`host`、`ssh_key`
+- 规则 section 格式：`[rule "规则名"]`，字段：`dir`、`profile`
 - `host` 用于判断同平台多账号（相同 host 需配置 SSH 别名）
-- `[rules]` 为保留 section，存放目录 → 身份映射
-- 身份名不能使用 `rules`
 
 ## 子命令设计
 
@@ -58,6 +69,7 @@ ssh_key = ~/.ssh/id_rsa_github_work
 |--------|------|------|
 | `(无)` | 进入交互式主菜单 | `git-profile` |
 | `add` | 添加新身份（交互式引导，可选生成 SSH 密钥） | `git-profile add` |
+| `edit <name>` | 修改已有身份的字段 | `git-profile edit work` |
 | `list` | 列出所有已配置的身份 | `git-profile list` |
 | `use <name>` | 在当前项目应用指定身份 | `git-profile use work` |
 | `use` | 无参数时列出身份让用户选择 | `git-profile use` |
@@ -73,11 +85,12 @@ ssh_key = ~/.ssh/id_rsa_github_work
 Git Profile Manager
 ━━━━━━━━━━━━━━━━━━━━━
 1) 添加新身份
-2) 查看所有身份
-3) 切换当前项目身份
-4) 管理目录规则
-5) 查看当前身份
-6) 删除身份
+2) 修改身份
+3) 查看所有身份
+4) 切换当前项目身份
+5) 管理目录规则
+6) 查看当前身份
+7) 删除身份
 0) 退出
 
 请选择:
@@ -85,37 +98,69 @@ Git Profile Manager
 
 ## 核心流程
 
+### SSH 多账号策略
+
+采用 `core.sshCommand` 作为主要方案：
+
+- **`use` 命令**和**目录规则（includeIf）**统一通过 `core.sshCommand = "ssh -i <key_path>"` 指定密钥
+- **SSH config Host 别名**仅在 `add` 时为同平台多账号自动配置，作为补充手段（方便用户手动 `git clone` 时使用正确的别名 URL）
+- `use` 命令不再自动修改 remote URL，因为 `core.sshCommand` 已足够解决密钥选择问题
+- 如用户的 remote URL 已使用 Host 别名格式，`core.sshCommand` 和 Host 别名可共存无冲突
+
 ### add 流程
 
-1. 输入身份名称（如 personal、work）
-2. 输入用户名
-3. 输入邮箱
-4. 输入 Git 平台 Host（如 github.com）
-5. 是否生成新 SSH 密钥？
-   - 是 → `ssh-keygen` 生成到 `~/.ssh/id_rsa_<身份名>`，显示公钥供用户添加到平台
+1. 输入身份名称（仅允许 `[a-zA-Z0-9_-]`）
+2. 检测身份名是否已存在，已存在则提示是否覆盖
+3. 输入用户名
+4. 输入邮箱
+5. 输入 Git 平台 Host（如 github.com）
+6. 是否生成新 SSH 密钥？
+   - 是 → 选择算法（默认 ed25519，可选 rsa），`ssh-keygen` 生成到 `~/.ssh/git_profile_<身份名>`，显示公钥供用户添加到平台
    - 否 → 输入已有密钥路径
-6. 检测同平台多账号（配置文件中已有相同 host 的身份）
-   - 是 → 在 `~/.ssh/config` 添加 Host 别名（如 `Host github.com-work`）
-   - 否 → 在 `~/.ssh/config` 添加标准 Host 条目
-7. 保存身份到 `~/.git-profiles.conf`
+7. 检测同平台多账号（配置文件中已有相同 host 的身份）
+   - 是 → 在 `~/.ssh/config` 添加 Host 别名条目（如 `Host github.com-work`），用 `# git-profile: <name>` 注释标记
+   - 否 → 在 `~/.ssh/config` 添加标准 Host 条目，同样用注释标记
+8. 保存身份到 `~/.git-profiles.conf`
+9. 显示添加成功摘要
+
+### edit 流程
+
+1. 读取当前身份信息并展示
+2. 逐字段提示修改（回车跳过保持不变）
+3. 如修改了 host 或 ssh_key，同步更新 SSH config 条目和 gitconfig.d 片段
+4. 显示修改结果摘要
 
 ### use 流程
 
-1. 读取身份信息
-2. 设置当前项目 git config：
+1. 检测当前目录是否为 git 仓库，否则提示退出
+2. 读取身份信息
+3. 设置当前项目 git config：
    - `git config user.name "xxx"`
    - `git config user.email "xxx"`
    - `git config core.sshCommand "ssh -i <key_path>"`
-3. 检查 remote URL 是否需要调整（同平台多账号场景）
-   - 需要 → 显示变更内容，询问确认后修改
-   - 不需要 → 跳过
-4. 显示配置结果摘要
+4. 检测 remote URL 协议类型，如果是 HTTPS 则提示"SSH 配置不影响 HTTPS remote，是否转换为 SSH URL？"
+5. 显示配置结果摘要
+
+### current 流程
+
+输出格式：
+
+```
+Current Git Profile: work
+  Name:   Chen Jinfan
+  Email:  jinfan.chen@company.com
+  Host:   gitlab.company.com
+  Key:    ~/.ssh/git_profile_work
+  Source: project config (.git/config)
+```
+
+`Source` 标明配置来源：project config / includeIf rule / global config / 未配置。
 
 ### rule add 流程
 
 1. 输入目录路径（如 `~/Project/work/`）
 2. 选择关联身份
-3. 保存到 `~/.git-profiles.conf` 的 `[rules]`
+3. 保存到 `~/.git-profiles.conf` 的 `[rule "xxx"]` section
 4. 生成 gitconfig 片段文件 `~/.gitconfig.d/<身份名>`，内容：
    ```ini
    [user]
@@ -124,15 +169,27 @@ Git Profile Manager
    [core]
      sshCommand = ssh -i <key_path>
    ```
-5. 写入 `~/.gitconfig` 的 includeIf：
-   ```ini
-   [includeIf "gitdir:~/Project/work/"]
-     path = ~/.gitconfig.d/<身份名>
+5. 使用 `git config --global` 命令写入 includeIf：
    ```
+   git config --global includeIf."gitdir:<dir>".path ~/.gitconfig.d/<身份名>
+   ```
+
+### rule remove 流程
+
+1. 列出已有规则让用户选择
+2. 从 `~/.git-profiles.conf` 中删除对应 `[rule "xxx"]` section
+3. 从 `~/.gitconfig` 中删除对应 includeIf 条目（使用 `git config --global --unset`）
+4. 检查是否还有其他规则引用同一身份，如果没有则提示是否删除 `~/.gitconfig.d/<name>` 片段
 
 ### remove 流程
 
-提示是否同时清理：SSH 密钥文件、SSH config 条目、gitconfig.d 片段、includeIf 规则。
+1. 检查该身份是否被 rules 引用，如有则列出并提示是否一并删除关联规则
+2. 提示是否同时清理：
+   - SSH 密钥文件
+   - SSH config 条目（通过 `# git-profile: <name>` 注释定位）
+   - gitconfig.d 片段
+   - includeIf 规则
+3. 执行清理并显示结果摘要
 
 ## 文件结构
 
@@ -150,9 +207,9 @@ git_config/
 | 文件 | 用途 |
 |------|------|
 | `~/.git-profiles.conf` | 身份配置中心 |
-| `~/.ssh/config` | SSH Host 别名配置 |
-| `~/.ssh/id_rsa_<name>` | 各身份的 SSH 密钥 |
-| `~/.gitconfig` | includeIf 规则写入处 |
+| `~/.ssh/config` | SSH Host 别名配置（条目用 `# git-profile: <name>` 标记） |
+| `~/.ssh/git_profile_<name>` | 各身份的 SSH 密钥 |
+| `~/.gitconfig` | includeIf 规则写入处（通过 `git config --global` 操作） |
 | `~/.gitconfig.d/<name>` | 各身份的 git 配置片段 |
 | `<project>/.git/config` | use 命令写入的项目级配置 |
 
@@ -160,20 +217,23 @@ git_config/
 
 `install.sh` 执行：
 
-1. 复制 `git-profile` 到 `/usr/local/bin/`（或 `~/.local/bin/`）
+1. 复制 `git-profile` 到 `~/.local/bin/`（默认）或用户指定路径
 2. 赋予可执行权限
 3. 初始化 `~/.git-profiles.conf`（如不存在）
 4. 创建 `~/.gitconfig.d/` 目录
-5. 提示安装完成
+5. 设置 git 别名：`git config --global alias.profile '!git-profile'`
+6. 提示安装完成
 
 ## 边界情况
 
 - **非 git 目录运行 `use`/`current`** — 检测并提示退出
 - **身份名重复** — 提示是否覆盖
+- **身份名非法字符** — 校验仅允许 `[a-zA-Z0-9_-]`
 - **密钥文件已存在** — 提示跳过或覆盖
-- **SSH config 重复 Host** — 添加前检测避免重复
+- **SSH config 重复 Host** — 添加前通过注释标记检测避免重复
 - **includeIf 已存在** — 检测避免重复
-- **删除身份时清理** — 提示是否同时删除关联文件
+- **删除身份时级联清理** — 检查 rules 引用并提示一并删除
+- **HTTPS remote** — `use` 时检测并提示用户是否转换为 SSH URL
 
 ## 错误处理
 
@@ -184,8 +244,9 @@ git_config/
 ## 安全考虑
 
 - SSH 密钥权限设为 600
-- 修改 `~/.ssh/config` 和 `~/.gitconfig` 前自动备份（`.bak`）
-- 修改 remote URL 前必须用户确认
+- 修改 `~/.ssh/config` 前自动备份（带时间戳：`.bak.YYYYMMDD_HHMMSS`）
+- `~/.gitconfig` 通过 `git config --global` 命令操作，无需直接文本编辑
+- 所有操作完成后显示明确的成功/失败反馈
 
 ## 不做的事（YAGNI）
 
@@ -193,3 +254,4 @@ git_config/
 - GPG 签名配置
 - 远程平台 API 交互（如自动上传公钥）
 - 多机同步
+- 卸载脚本（文件不多，README 中说明手动清理步骤即可）
