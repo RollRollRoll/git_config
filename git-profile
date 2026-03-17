@@ -270,6 +270,124 @@ write_rule_section() {
   } >> "$CONF_FILE"
 }
 
+# ── SSH config helpers ────────────────────────────────────────────────────────
+
+# backup_ssh_config: backup ~/.ssh/config with a timestamp suffix
+backup_ssh_config() {
+  local ssh_config="${HOME}/.ssh/config"
+  [[ -f "$ssh_config" ]] || return 0
+  local ts
+  ts="$(date +%Y%m%d%H%M%S)"
+  cp "$ssh_config" "${ssh_config}.bak.${ts}"
+}
+
+# host_has_other_profiles: returns 0 (true) if the given host is used by any
+# profile OTHER than the specified current profile name.
+# Usage: host_has_other_profiles <host> <current_profile_name>
+host_has_other_profiles() {
+  local host="$1" current="$2"
+  local parsed
+  parsed="$(parse_config)"
+  local line seen_profiles=""
+  while IFS= read -r line; do
+    if [[ "$line" == PROFILE:* ]]; then
+      local rest="${rest_dummy-}"
+      rest="${line#PROFILE:}"
+      local pname="${rest%%:*}"
+      # Collect unique profile names
+      if [[ "$seen_profiles" != *"|${pname}|"* ]]; then
+        seen_profiles="${seen_profiles}|${pname}|"
+      fi
+    fi
+  done <<< "$parsed"
+
+  # For each profile that isn't the current one, check if its host matches
+  local pname
+  while IFS= read -r line; do
+    if [[ "$line" == PROFILE:* ]]; then
+      local rest="${line#PROFILE:}"
+      pname="${rest%%:*}"
+      if [[ "$pname" != "$current" ]]; then
+        local key_part="${rest#*:}"
+        if [[ "$key_part" == "host=${host}" ]]; then
+          return 0
+        fi
+      fi
+    fi
+  done <<< "$parsed"
+
+  return 1
+}
+
+# write_ssh_alias: append a Host alias block to ~/.ssh/config
+# Usage: write_ssh_alias <profile_name> <host> <key_path>
+write_ssh_alias() {
+  local name="$1" host="$2" key_path="$3"
+  local ssh_config="${HOME}/.ssh/config"
+
+  backup_ssh_config
+
+  {
+    echo ""
+    echo "# git-profile: ${name}"
+    echo "Host ${host}-${name}"
+    echo "  HostName ${host}"
+    echo "  IdentityFile ${key_path}"
+    echo "  IdentitiesOnly yes"
+  } >> "$ssh_config"
+}
+
+# ── Add profile core logic ─────────────────────────────────────────────────────
+
+# _add_profile: core add logic
+# Usage: _add_profile <name> <user> <email> <host> <key_path>
+_add_profile() {
+  local name="$1" fullname="$2" email="$3" host="$4" key_path="$5"
+
+  # Validate profile name
+  validate_profile_name "$name" || exit 1
+
+  # Write the profile section first
+  write_profile_section "$name" "$fullname" "$email" "$host" "$key_path"
+
+  # After writing, check if this host is used by any OTHER profile
+  if host_has_other_profiles "$host" "$name"; then
+    # Multiple accounts on the same host — need SSH alias
+    local do_write="${GIT_PROFILE_AUTO_CONFIRM:-}"
+    if [[ "$do_write" != "y" ]]; then
+      echo "Multiple profiles share the host '${host}'."
+      echo "To avoid SSH key conflicts, an SSH alias will be added for this profile."
+      printf "Write SSH alias to ~/.ssh/config? [Y/n] "
+      read -r answer
+      case "$answer" in
+        [nN]*)  do_write="n" ;;
+        *)      do_write="y" ;;
+      esac
+    fi
+
+    if [[ "$do_write" == "y" ]]; then
+      write_ssh_alias "$name" "$host" "$key_path"
+    fi
+  fi
+  # Single account for this host — do NOT write to ~/.ssh/config
+}
+
+# _add_profile_with_keygen: generate SSH key then call _add_profile
+# Usage: _add_profile_with_keygen <name> <user> <email> <host> <algorithm>
+_add_profile_with_keygen() {
+  local name="$1" fullname="$2" email="$3" host="$4" algorithm="${5:-ed25519}"
+  local key_path="${HOME}/.ssh/git_profile_${name}"
+
+  # Generate SSH key (no passphrase, quiet)
+  ssh-keygen -t "$algorithm" -C "${email}" -f "$key_path" -N "" -q
+
+  # Ensure private key has correct permissions
+  chmod 600 "$key_path"
+
+  # Now call core add
+  _add_profile "$name" "$fullname" "$email" "$host" "$key_path"
+}
+
 # ── Subcommand implementations ────────────────────────────────────────────────
 
 cmd_list() {
@@ -411,6 +529,24 @@ cmd_internal_write_rule() {
   write_rule_section "$1" "$2" "$3"
 }
 
+cmd_internal_add_profile() {
+  # Usage: _add_profile <name> <user> <email> <host> <key_path>
+  if [[ $# -lt 5 ]]; then
+    echo "Usage: git-profile _add_profile <name> <user> <email> <host> <key_path>" >&2
+    exit 1
+  fi
+  _add_profile "$1" "$2" "$3" "$4" "$5"
+}
+
+cmd_internal_add_profile_with_keygen() {
+  # Usage: _add_profile_with_keygen <name> <user> <email> <host> <algorithm>
+  if [[ $# -lt 5 ]]; then
+    echo "Usage: git-profile _add_profile_with_keygen <name> <user> <email> <host> <algorithm>" >&2
+    exit 1
+  fi
+  _add_profile_with_keygen "$1" "$2" "$3" "$4" "$5"
+}
+
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 main() {
   check_dependencies
@@ -472,6 +608,14 @@ main() {
     _write_rule)
       shift
       cmd_internal_write_rule "$@"
+      ;;
+    _add_profile)
+      shift
+      cmd_internal_add_profile "$@"
+      ;;
+    _add_profile_with_keygen)
+      shift
+      cmd_internal_add_profile_with_keygen "$@"
       ;;
     "")
       show_help

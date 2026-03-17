@@ -210,4 +210,91 @@ test_write_profile_section
 test_delete_profile_section
 test_write_rule_section
 
+# --- Test: add command ---
+test_add_profile_with_existing_key() {
+  setup_test_home
+  touch "$TEST_HOME/.ssh/git_profile_myprof"
+  touch "$TEST_HOME/.ssh/git_profile_myprof.pub"
+  echo "fake-pub-key" > "$TEST_HOME/.ssh/git_profile_myprof.pub"
+
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _add_profile "myprof" "My User" "my@email.com" "github.com" "$TEST_HOME/.ssh/git_profile_myprof"
+
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "add creates profile section" "[myprof]" "$content"
+  assert_contains "add writes name" "name = My User" "$content"
+  assert_contains "add writes email" "email = my@email.com" "$content"
+  assert_contains "add writes host" "host = github.com" "$content"
+  teardown_test_home
+}
+
+test_add_profile_generates_key() {
+  setup_test_home
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _add_profile_with_keygen "newprof" "New User" "new@email.com" "gitlab.com" "ed25519"
+
+  if [[ -f "$TEST_HOME/.ssh/git_profile_newprof" ]]; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: SSH key file not generated"
+  fi
+
+  if [[ "$(stat -f '%Lp' "$TEST_HOME/.ssh/git_profile_newprof" 2>/dev/null || stat -c '%a' "$TEST_HOME/.ssh/git_profile_newprof" 2>/dev/null)" == "600" ]]; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: SSH key permissions not 600"
+  fi
+
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "keygen add writes profile" "[newprof]" "$content"
+  teardown_test_home
+}
+
+test_add_same_host_writes_ssh_alias() {
+  setup_test_home
+  touch "$TEST_HOME/.ssh/git_profile_first"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _add_profile "first" "First" "first@mail.com" "github.com" "$TEST_HOME/.ssh/git_profile_first"
+
+  touch "$TEST_HOME/.ssh/git_profile_second"
+  touch "$TEST_HOME/.ssh/config"
+  GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _add_profile "second" "Second" "second@mail.com" "github.com" "$TEST_HOME/.ssh/git_profile_second"
+
+  local ssh_config
+  ssh_config="$(cat "$TEST_HOME/.ssh/config")"
+  assert_contains "SSH alias Host written" "Host github.com-second" "$ssh_config"
+  assert_contains "SSH alias has HostName" "HostName github.com" "$ssh_config"
+  assert_contains "SSH alias has IdentityFile" "IdentityFile" "$ssh_config"
+  assert_contains "SSH alias has git-profile marker" "# git-profile: second" "$ssh_config"
+  teardown_test_home
+}
+
+test_add_single_account_no_ssh_config() {
+  setup_test_home
+  touch "$TEST_HOME/.ssh/git_profile_only"
+  touch "$TEST_HOME/.ssh/config"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _add_profile "only" "Only" "only@mail.com" "github.com" "$TEST_HOME/.ssh/git_profile_only"
+
+  local ssh_config
+  ssh_config="$(cat "$TEST_HOME/.ssh/config")"
+  if [[ -z "$ssh_config" ]]; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: single account should not write to ssh config, got: $ssh_config"
+  fi
+  teardown_test_home
+}
+
+test_add_profile_with_existing_key
+test_add_profile_generates_key
+test_add_same_host_writes_ssh_alias
+test_add_single_account_no_ssh_config
+
 report
