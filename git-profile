@@ -749,6 +749,91 @@ cmd_check() {
   echo "git-profile check: not yet implemented." >&2
 }
 
+# ── Rule helpers ──────────────────────────────────────────────────────────────
+
+# normalize_path: expand ~, make absolute, use cd+pwd if dir exists (fallback: realpath), ensure trailing /
+normalize_path() {
+  local path="$1"
+
+  # Expand leading ~
+  path="${path/#\~/$HOME}"
+
+  # If directory exists, resolve canonically using cd+pwd (avoids symlink resolution
+  # issues where realpath may return a different symlink-resolved path than mktemp -d)
+  if [[ -d "$path" ]]; then
+    path="$(cd "$path" && pwd)" || {
+      if command -v realpath &>/dev/null; then
+        path="$(realpath "$path" 2>/dev/null)" || true
+      fi
+    }
+  else
+    # Directory does not exist — warn and keep as-is (make absolute if relative)
+    echo "git-profile: warning: directory '${path}' does not exist." >&2
+    if [[ "$path" != /* ]]; then
+      path="$(pwd)/${path}"
+    fi
+  fi
+
+  # Ensure trailing /
+  path="${path%/}/"
+  echo "$path"
+}
+
+# write_gitconfig_fragment: write a gitconfig.d/<profile> fragment
+# Usage: write_gitconfig_fragment <profile_name> <fullname> <email> <key_path>
+write_gitconfig_fragment() {
+  local profile="$1" fullname="$2" email="$3" key_path="$4"
+  local fragment_file="${GITCONFIG_D}/${profile}"
+
+  mkdir -p "$GITCONFIG_D"
+
+  cat > "$fragment_file" <<EOF
+[gitProfile]
+  name = ${profile}
+[user]
+  name = ${fullname}
+  email = ${email}
+[core]
+  sshCommand = ssh -i "${key_path}" -o IdentitiesOnly=yes
+EOF
+}
+
+# _rule_add: core rule add logic
+# Usage: _rule_add <rule_name> <dir> <profile>
+_rule_add() {
+  local rule_name="$1" dir="$2" profile="$3"
+
+  # Validate profile exists
+  local p_name
+  p_name="$(get_profile_field "$profile" "name")"
+  if [[ -z "$p_name" ]]; then
+    echo "git-profile: profile '${profile}' not found." >&2
+    exit 1
+  fi
+
+  # Normalize the path
+  local norm_dir
+  norm_dir="$(normalize_path "$dir")"
+
+  # Write rule section to config
+  write_rule_section "$rule_name" "$norm_dir" "$profile"
+
+  # Generate gitconfig.d fragment
+  local p_email p_key
+  p_email="$(get_profile_field "$profile" "email")"
+  p_key="$(get_profile_field "$profile" "ssh_key")"
+  # Expand ~ in key path
+  p_key="${p_key/#\~/$HOME}"
+
+  write_gitconfig_fragment "$profile" "$p_name" "$p_email" "$p_key"
+
+  # Write includeIf to global gitconfig
+  local fragment_file="${GITCONFIG_D}/${profile}"
+  git config --global "includeIf.gitdir:${norm_dir}.path" "$fragment_file"
+
+  echo "Rule '${rule_name}' added: ${norm_dir} -> profile '${profile}'"
+}
+
 # ── Rule subcommands ──────────────────────────────────────────────────────────
 
 cmd_rule_list() {
@@ -775,7 +860,37 @@ cmd_rule_list() {
 }
 
 cmd_rule_add() {
-  echo "git-profile rule add: not yet implemented." >&2
+  # ── 1. Rule name ──────────────────────────────────────────────────────────
+  local rule_name=""
+  while [[ -z "$rule_name" ]]; do
+    printf "Rule name (letters, digits, hyphens, underscores): "
+    read -r rule_name
+    if [[ -z "$rule_name" ]]; then
+      echo "Rule name cannot be empty." >&2
+    fi
+  done
+
+  # ── 2. Directory ──────────────────────────────────────────────────────────
+  local dir=""
+  while [[ -z "$dir" ]]; do
+    printf "Directory to match (e.g. ~/projects/work/): "
+    read -r dir
+    if [[ -z "$dir" ]]; then
+      echo "Directory cannot be empty." >&2
+    fi
+  done
+
+  # ── 3. Profile ────────────────────────────────────────────────────────────
+  local profile=""
+  while [[ -z "$profile" ]]; do
+    printf "Profile to apply: "
+    read -r profile
+    if [[ -z "$profile" ]]; then
+      echo "Profile cannot be empty." >&2
+    fi
+  done
+
+  _rule_add "$rule_name" "$dir" "$profile"
 }
 
 cmd_rule_remove() {
@@ -923,6 +1038,14 @@ main() {
     _add_profile_with_keygen)
       shift
       cmd_internal_add_profile_with_keygen "$@"
+      ;;
+    _rule_add)
+      shift
+      if [[ $# -lt 3 ]]; then
+        echo "Usage: git-profile _rule_add <rule_name> <dir> <profile>" >&2
+        exit 1
+      fi
+      _rule_add "$1" "$2" "$3"
       ;;
     "")
       show_help

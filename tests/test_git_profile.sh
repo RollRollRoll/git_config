@@ -465,4 +465,60 @@ test_current_shows_use_profile
 test_current_no_profile
 test_current_not_git_repo
 
+# ── Task 8 tests ─────────────────────────────────────────────────────────────
+
+test_rule_add_normalizes_path() {
+  setup_test_home
+  local target_dir="$TEST_HOME/projects/work"
+  mkdir -p "$target_dir"
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+  mkdir -p "$TEST_HOME/.gitconfig.d"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    GITCONFIG_D="$TEST_HOME/.gitconfig.d" \
+    GIT_PROFILE_AUTO_CONFIRM=y \
+    "$GIT_PROFILE" _rule_add "work-projects" "$target_dir" "work"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "rule section created" '[rule "work-projects"]' "$content"
+  assert_contains "rule dir ends with /" "dir = ${target_dir}/" "$content"
+  local fragment
+  fragment="$(cat "$TEST_HOME/.gitconfig.d/work")"
+  assert_contains "fragment has gitProfile.name" "name = work" "$fragment"
+  assert_contains "fragment has user.name" "name = Work User" "$fragment"
+  assert_contains "fragment has sshCommand" "IdentitiesOnly=yes" "$fragment"
+  teardown_test_home
+}
+
+test_rule_add_tilde_expansion() {
+  setup_test_home
+  mkdir -p "$TEST_HOME/projects"
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[personal]
+name = User
+email = u@mail.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/key
+EOF
+  touch "$TEST_HOME/.ssh/key"
+  mkdir -p "$TEST_HOME/.gitconfig.d"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    GITCONFIG_D="$TEST_HOME/.gitconfig.d" \
+    GIT_PROFILE_AUTO_CONFIRM=y \
+    "$GIT_PROFILE" _rule_add "personal-rule" "~/projects" "personal"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "tilde expanded" "dir = ${TEST_HOME}/projects/" "$content"
+  teardown_test_home
+}
+
+test_rule_add_normalizes_path
+test_rule_add_tilde_expansion
+
 report
