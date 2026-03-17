@@ -598,4 +598,77 @@ EOF
 
 test_edit_updates_profile_and_fragment
 
+# ── Task 11 tests ────────────────────────────────────────────────────────────
+
+test_remove_profile() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[keep]
+name = Keep
+email = keep@mail.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_keep
+
+[delete-target]
+name = Delete
+email = del@mail.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_delete
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_keep"
+  touch "$TEST_HOME/.ssh/git_profile_delete"
+  touch "$TEST_HOME/.ssh/git_profile_delete.pub"
+  GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _remove_profile "delete-target"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "keep profile still exists" "[keep]" "$content"
+  if [[ "$content" == *"[delete-target]"* ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: delete-target should be removed"
+  else
+    PASS=$((PASS + 1))
+  fi
+  teardown_test_home
+}
+
+test_remove_with_rules_cascade() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work
+email = work@mail.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+
+[rule "work-rule"]
+dir = $TEST_HOME/projects/
+profile = work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+  mkdir -p "$TEST_HOME/.gitconfig.d"
+  echo "fragment" > "$TEST_HOME/.gitconfig.d/work"
+  GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    GITCONFIG_D="$TEST_HOME/.gitconfig.d" \
+    "$GIT_PROFILE" _remove_profile "work"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  if [[ "$content" == *"[work]"* ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: work profile should be removed"
+  else
+    PASS=$((PASS + 1))
+  fi
+  if [[ "$content" == *'[rule "work-rule"]'* ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: work-rule should be cascade-removed"
+  else
+    PASS=$((PASS + 1))
+  fi
+  teardown_test_home
+}
+
+test_remove_profile
+test_remove_with_rules_cascade
+
 report

@@ -598,8 +598,169 @@ cmd_edit() {
   _edit_profile "$profile_arg" "$new_name" "$new_email" "$new_host" "$new_key"
 }
 
+# _remove_ssh_config_entries: remove SSH config block marked with # git-profile: <name>
+_remove_ssh_config_entries() {
+  local name="$1"
+  local ssh_config="${HOME}/.ssh/config"
+  [[ -f "$ssh_config" ]] || return 0
+
+  local marker="# git-profile: ${name}"
+  local tmp
+  tmp="$(mktemp)"
+
+  awk -v marker="$marker" '
+    BEGIN { skip = 0 }
+    {
+      if ($0 == marker) {
+        skip = 1
+        next
+      }
+      # Stop skipping on next Host line (not the one we are removing)
+      if (skip && /^Host / ) {
+        skip = 0
+      }
+      if (!skip) print
+    }
+  ' "$ssh_config" > "$tmp"
+
+  mv "$tmp" "$ssh_config"
+}
+
+# _remove_profile: core remove logic
+# Usage: _remove_profile <name>
+_remove_profile() {
+  local name="$1"
+
+  # Validate profile exists
+  local p_name
+  p_name="$(get_profile_field "$name" "name")"
+  if [[ -z "$p_name" ]]; then
+    echo "git-profile: profile '${name}' not found." >&2
+    exit 1
+  fi
+
+  # IMPORTANT: Read p_key BEFORE deleting the section
+  local p_key
+  p_key="$(get_profile_field "$name" "ssh_key")"
+  p_key="${p_key/#\~/$HOME}"
+
+  # Find referencing rules (cascade delete) — use string accumulation for Bash 3.2 compat
+  local referencing_rules=""
+  local rname
+  while IFS= read -r rname; do
+    [[ -z "$rname" ]] && continue
+    local rdir rprofile
+    rprofile="$(get_rule_field "$rname" "profile")"
+    if [[ "$rprofile" == "$name" ]]; then
+      rdir="$(get_rule_field "$rname" "dir")"
+      referencing_rules="${referencing_rules}${rname}:${rdir}
+"
+    fi
+  done < <(list_rule_names)
+
+  # If there are referencing rules, cascade-remove them
+  if [[ -n "$referencing_rules" ]]; then
+    local do_cascade="${GIT_PROFILE_AUTO_CONFIRM:-}"
+    if [[ "$do_cascade" != "y" ]]; then
+      echo "The following rules reference profile '${name}':"
+      local entry
+      while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        echo "  ${entry%%:*}"
+      done <<< "$referencing_rules"
+      printf "Remove these rules as well? [Y/n] "
+      read -r answer
+      case "$answer" in
+        [nN]*) do_cascade="n" ;;
+        *)     do_cascade="y" ;;
+      esac
+    fi
+
+    if [[ "$do_cascade" == "y" ]]; then
+      local entry
+      while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        local rn rdir
+        rn="${entry%%:*}"
+        rdir="${entry#*:}"
+        # Delete rule section
+        delete_config_section "rule:${rn}"
+        # Remove includeIf from global gitconfig
+        if [[ -n "$rdir" ]]; then
+          git config --global --unset "includeIf.gitdir:${rdir}.path" 2>/dev/null || true
+        fi
+      done <<< "$referencing_rules"
+    fi
+  fi
+
+  # Delete the profile section
+  delete_config_section "$name"
+
+  # Remove gitconfig.d fragment if it exists
+  local fragment_file="${GITCONFIG_D}/${name}"
+  if [[ -f "$fragment_file" ]]; then
+    local do_remove="${GIT_PROFILE_AUTO_CONFIRM:-}"
+    if [[ "$do_remove" != "y" ]]; then
+      printf "Remove gitconfig fragment '%s'? [Y/n] " "$fragment_file"
+      read -r answer
+      case "$answer" in
+        [nN]*) do_remove="n" ;;
+        *)     do_remove="y" ;;
+      esac
+    fi
+    if [[ "$do_remove" == "y" ]]; then
+      rm -f "$fragment_file"
+    fi
+  fi
+
+  # Clean up SSH keys if they exist
+  if [[ -n "$p_key" && -f "$p_key" ]]; then
+    local do_delete_key="${GIT_PROFILE_AUTO_CONFIRM:-}"
+    if [[ "$do_delete_key" != "y" ]]; then
+      printf "Delete SSH key files for '%s'? [y/N] " "$name"
+      read -r answer
+      case "$answer" in
+        [yY]*) do_delete_key="y" ;;
+        *)     do_delete_key="n" ;;
+      esac
+    fi
+    if [[ "$do_delete_key" == "y" ]]; then
+      rm -f "$p_key" "${p_key}.pub" 2>/dev/null || true
+    fi
+  fi
+
+  # Remove SSH config entries
+  _remove_ssh_config_entries "$name"
+
+  echo "Profile '${name}' removed."
+}
+
 cmd_remove() {
-  echo "git-profile remove: not yet implemented." >&2
+  local profile_arg="${1:-}"
+
+  if [[ -z "$profile_arg" ]]; then
+    # Interactive: list profiles and prompt
+    local names
+    names="$(list_profile_names)"
+    if [[ -z "$names" ]]; then
+      echo "git-profile: no profiles configured." >&2
+      return 0
+    fi
+    echo "Configured profiles:"
+    local pname
+    while IFS= read -r pname; do
+      [[ -z "$pname" ]] && continue
+      echo "  ${pname}"
+    done <<< "$names"
+    printf "Profile to remove: "
+    read -r profile_arg
+    if [[ -z "$profile_arg" ]]; then
+      echo "Aborted." >&2
+      return 1
+    fi
+  fi
+
+  _remove_profile "$profile_arg"
 }
 
 cmd_use_clear() {
@@ -1221,6 +1382,14 @@ main() {
         exit 1
       fi
       _edit_profile "$1" "$2" "$3" "$4" "$5"
+      ;;
+    _remove_profile)
+      shift
+      if [[ $# -lt 1 ]]; then
+        echo "Usage: git-profile _remove_profile <name>" >&2
+        exit 1
+      fi
+      _remove_profile "$1"
       ;;
     "")
       show_help
