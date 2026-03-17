@@ -73,14 +73,147 @@ Examples:
 EOF
 }
 
-# ── Subcommand stubs ──────────────────────────────────────────────────────────
+# ── INI config parser ─────────────────────────────────────────────────────────
+# Reads CONF_FILE and emits lines of two forms:
+#   PROFILE:name:key=value
+#   RULE:rulename:key=value
+parse_config() {
+  local conf="${1:-$CONF_FILE}"
+  [[ -f "$conf" ]] || return 0
+
+  local current_type=""   # "PROFILE" or "RULE"
+  local current_name=""
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Strip leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+
+    # Skip blank lines and comments
+    [[ -z "$line" || "$line" == \#* ]] && continue
+
+    # Section header: [rule "name"] or [name]
+    if [[ "$line" =~ ^\[rule[[:space:]]\"([^\"]+)\"\]$ ]]; then
+      current_type="RULE"
+      current_name="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+      current_type="PROFILE"
+      current_name="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    # Key = value line (use (.*)$ to allow empty values)
+    if [[ "$line" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*=[[:space:]](.*)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local val="${BASH_REMATCH[2]}"
+      if [[ -n "$current_type" && -n "$current_name" ]]; then
+        echo "${current_type}:${current_name}:${key}=${val}"
+      fi
+    fi
+  done < "$conf"
+}
+
+# Get a specific field from a profile
+get_profile_field() {
+  local profile="$1" field="$2"
+  local prefix="PROFILE:${profile}:${field}="
+  local parsed
+  parsed="$(parse_config)"
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == "${prefix}"* ]]; then
+      echo "${line#${prefix}}"
+      return 0
+    fi
+  done <<< "$parsed"
+}
+
+# List all profile names
+list_profile_names() {
+  local parsed
+  parsed="$(parse_config)"
+  local line seen=""
+  while IFS= read -r line; do
+    if [[ "$line" == PROFILE:* ]]; then
+      local rest="${line#PROFILE:}"
+      local pname="${rest%%:*}"
+      # Deduplicate without sort -u to avoid SIGPIPE
+      if [[ "$seen" != *"|${pname}|"* ]]; then
+        seen="${seen}|${pname}|"
+        echo "$pname"
+      fi
+    fi
+  done <<< "$parsed"
+}
+
+# List all rule names
+list_rule_names() {
+  local parsed
+  parsed="$(parse_config)"
+  local line seen=""
+  while IFS= read -r line; do
+    if [[ "$line" == RULE:* ]]; then
+      local rest="${line#RULE:}"
+      local rname="${rest%%:*}"
+      # Deduplicate without sort -u to avoid SIGPIPE
+      if [[ "$seen" != *"|${rname}|"* ]]; then
+        seen="${seen}|${rname}|"
+        echo "$rname"
+      fi
+    fi
+  done <<< "$parsed"
+}
+
+# Get a specific field from a rule
+get_rule_field() {
+  local rulename="$1" field="$2"
+  local prefix="RULE:${rulename}:${field}="
+  local parsed
+  parsed="$(parse_config)"
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == "${prefix}"* ]]; then
+      echo "${line#${prefix}}"
+      return 0
+    fi
+  done <<< "$parsed"
+}
+
+# ── Subcommand implementations ────────────────────────────────────────────────
 
 cmd_list() {
-  echo "git-profile list: not yet implemented." >&2
+  local names
+  names="$(list_profile_names)"
+  if [[ -z "$names" ]]; then
+    echo "No profiles configured."
+    echo "Run 'git-profile add' to create one."
+    return 0
+  fi
+
+  echo "Configured profiles:"
+  echo ""
+  local profile
+  while IFS= read -r profile; do
+    [[ -z "$profile" ]] && continue
+    local name email host ssh_key
+    name="$(get_profile_field "$profile" "name")"
+    email="$(get_profile_field "$profile" "email")"
+    host="$(get_profile_field "$profile" "host")"
+    ssh_key="$(get_profile_field "$profile" "ssh_key")"
+    echo "  [${profile}]"
+    echo "    name    = ${name}"
+    echo "    email   = ${email}"
+    echo "    host    = ${host}"
+    echo "    ssh_key = ${ssh_key}"
+    echo ""
+  done <<< "$names"
 }
 
 cmd_add() {
-  echo "git-profile add: not yet implemented." >&2
+  echo "git-profile add: interactive add not yet implemented." >&2
 }
 
 cmd_edit() {
@@ -107,8 +240,52 @@ cmd_check() {
   echo "git-profile check: not yet implemented." >&2
 }
 
+# ── Rule subcommands ──────────────────────────────────────────────────────────
+
+cmd_rule_list() {
+  local names
+  names="$(list_rule_names)"
+  if [[ -z "$names" ]]; then
+    echo "No rules configured."
+    return 0
+  fi
+
+  echo "Configured rules:"
+  echo ""
+  local rule
+  while IFS= read -r rule; do
+    [[ -z "$rule" ]] && continue
+    local dir profile
+    dir="$(get_rule_field "$rule" "dir")"
+    profile="$(get_rule_field "$rule" "profile")"
+    echo "  [rule \"${rule}\"]"
+    echo "    dir     = ${dir}"
+    echo "    profile = ${profile}"
+    echo ""
+  done <<< "$names"
+}
+
+cmd_rule_add() {
+  echo "git-profile rule add: not yet implemented." >&2
+}
+
+cmd_rule_remove() {
+  echo "git-profile rule remove: not yet implemented." >&2
+}
+
 cmd_rule() {
-  echo "git-profile rule: not yet implemented." >&2
+  local sub="${1:-}"
+  case "$sub" in
+    add)    shift; cmd_rule_add "$@" ;;
+    list)   cmd_rule_list ;;
+    remove) shift; cmd_rule_remove "$@" ;;
+    "")     interactive_rule_menu ;;
+    *)
+      echo "git-profile rule: unknown subcommand '${sub}'" >&2
+      echo "Usage: git-profile rule [add|list|remove]" >&2
+      exit 1
+      ;;
+  esac
 }
 
 interactive_rule_menu() {

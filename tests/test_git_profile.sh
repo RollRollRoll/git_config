@@ -86,4 +86,63 @@ test_version_flag
 test_help_flag
 test_unknown_subcommand
 
+# ── Task 2 tests ────────────────────────────────────────────────────────────
+
+test_parse_profiles() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+# comment line
+[personal]
+name = kgfan
+email = test@example.com
+host = github.com
+ssh_key = ~/.ssh/git_profile_personal
+
+[work]
+name = Chen Jinfan
+email = work@company.com
+host = gitlab.company.com
+ssh_key = ~/.ssh/git_profile_work
+EOF
+  local output
+  output="$(CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" list 2>&1)"
+  assert_contains "list shows personal" "personal" "$output"
+  assert_contains "list shows work" "work" "$output"
+  teardown_test_home
+}
+
+test_parse_rules() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+[personal]
+name = kgfan
+email = test@example.com
+host = github.com
+ssh_key = ~/.ssh/key
+
+[rule "my-rule"]
+dir = /tmp/projects/
+profile = personal
+EOF
+  local output
+  output="$(CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" rule list 2>&1)"
+  assert_contains "rule list shows rule name" "my-rule" "$output"
+  assert_contains "rule list shows directory" "/tmp/projects/" "$output"
+  assert_contains "rule list shows profile" "personal" "$output"
+  teardown_test_home
+}
+
+test_parse_empty_config() {
+  setup_test_home
+  echo "" > "$TEST_HOME/.git-profiles.conf"
+  local output
+  output="$(CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" list 2>&1)"
+  assert_contains "empty config shows no profiles" "No profiles" "$output"
+  teardown_test_home
+}
+
+test_parse_profiles
+test_parse_rules
+test_parse_empty_config
+
 report
