@@ -1232,8 +1232,55 @@ cmd_rule() {
   esac
 }
 
+interactive_menu() {
+  while true; do
+    echo ""
+    echo "Git Profile Manager"
+    echo "━━━━━━━━━━━━━━━━━━━━━"
+    echo "1) 添加新身份"
+    echo "2) 修改身份"
+    echo "3) 查看所有身份"
+    echo "4) 切换当前项目身份"
+    echo "5) 撤销身份覆盖（恢复原始配置）"
+    echo "6) 管理目录规则"
+    echo "7) 查看当前身份"
+    echo "8) 删除身份"
+    echo "0) 退出"
+    echo ""
+    read -rp "请选择: " choice
+
+    case "$choice" in
+      1) cmd_add ;;
+      2) cmd_edit ;;
+      3) cmd_list ;;
+      4) cmd_use ;;
+      5) cmd_use --clear ;;
+      6) interactive_rule_menu ;;
+      7) cmd_current ;;
+      8) cmd_remove ;;
+      0) echo "Bye."; return ;;
+      *) echo "Invalid choice." ;;
+    esac
+  done
+}
+
 interactive_rule_menu() {
-  echo "git-profile rule: interactive menu not yet implemented." >&2
+  echo ""
+  echo "Directory Rules"
+  echo "━━━━━━━━━━━━━━━━"
+  echo "1) 添加规则"
+  echo "2) 查看规则"
+  echo "3) 删除规则"
+  echo "0) 返回"
+  echo ""
+  read -rp "请选择: " choice
+  case "$choice" in
+    1) cmd_rule_add ;;
+    2) cmd_rule_list ;;
+    3) cmd_rule_remove ;;
+    0) return ;;
+    *) echo "Invalid choice." ;;
+  esac
 }
 
 # ── Hidden internal commands (used by tests and other subcommands) ─────────────
@@ -1392,7 +1439,7 @@ main() {
       _remove_profile "$1"
       ;;
     "")
-      show_help
+      interactive_menu
       exit 0
       ;;
     *)
