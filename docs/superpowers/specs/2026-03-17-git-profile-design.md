@@ -124,18 +124,22 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 
 这意味着一旦 `use` 写入项目级配置，目录规则就会被"压住"。为此引入以下机制：
 
-- **`use` 写入前备份（仅首次）** — 仅当 `gitProfile.name` 不存在时（即当前项目尚未被任何 `use` 覆盖），才备份当前项目级本地值到 `gitProfile.backup.*`：
+- **git config 层级规则** — `gitProfile.name` 同时存在于 includeIf 片段和项目级 `.git/config` 中，层级不同，判定时必须区分：
+  - `git config gitProfile.name` — 读取最终生效值（含 includeIf），用于 `current` 命令
+  - `git config --local gitProfile.name` — 仅读取项目级 `.git/config`，用于判断"是否被 `use` 覆盖"
+  - **所有 `gitProfile.backup.*` 的读写都限定 `--local`**，因为 backup 只存在于项目级配置
+- **`use` 写入前备份（仅首次）** — 仅当 `git config --local gitProfile.name` 为空时（即当前项目尚未被任何 `use` 覆盖），才备份当前项目级本地值到 `gitProfile.backup.*`：
   ```
-  git config gitProfile.backup.userName "原值"
-  git config gitProfile.backup.userEmail "原值"
-  git config gitProfile.backup.sshCommand "原值"
+  git config --local gitProfile.backup.userName "$(git config --local user.name)"
+  git config --local gitProfile.backup.userEmail "$(git config --local user.email)"
+  git config --local gitProfile.backup.sshCommand "$(git config --local core.sshCommand)"
   ```
-  如果某个键本地不存在，不写入对应 backup 键（表示"原本就没有"）。
-  后续连续 `use` 切换身份时（`gitProfile.name` 已存在），**不覆盖 backup**，始终保留首次 use 之前的原始状态。
+  如果某个键 `--local` 查不到，不写入对应 backup 键（表示"原本就没有本地值"）。
+  后续连续 `use` 切换身份时（`--local gitProfile.name` 已存在），**不覆盖 backup**，始终保留首次 use 之前的原始状态。
 - **`use --clear` 语义：撤销所有 use 覆盖** — 恢复到首次 `use` 之前的原始状态，而非"撤销最近一次 use"：
-  - backup 键存在 → 恢复为备份值
-  - backup 键不存在 → `--unset` 该键（恢复到 rule/global）
-  - 最后清除所有 `gitProfile.*` 键
+  - `git config --local gitProfile.backup.userName` 存在 → 恢复为备份值
+  - 该 backup 键不存在 → `git config --local --unset user.name`（恢复到 rule/global）
+  - 最后清除所有本地 `gitProfile.*` 键
   - 示例：`use work` → `use personal` → `use --clear` → 恢复到 work 和 personal 之前的原始状态
 - **`use` 执行时的提示** — 如果检测到当前项目已在某条目录规则的覆盖范围内，显示提示："当前目录已匹配规则 `<rule_name>` (身份: `<profile>`)，`use` 会覆盖该规则。如需恢复，运行 `git-profile use --clear`"
 - **`current` 输出中体现覆盖关系** — 当项目级配置覆盖了 includeIf 规则时，在 Source 字段标注，如 `Source: project config (overrides rule: work-projects)`
@@ -174,7 +178,7 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 2. 读取身份信息
 3. 检测当前目录是否在某条目录规则覆盖范围内，如果是则提示：
    > 当前目录已匹配规则 "work-projects" (身份: work)，use 会覆盖该规则。如需恢复，运行 git-profile use --clear
-4. 仅当 `gitProfile.name` 不存在时（首次 use），备份当前项目级本地值到 `gitProfile.backup.*`（详见"use 与 rule 的优先级模型"）
+4. 仅当 `git config --local gitProfile.name` 为空时（首次 use），备份当前项目级本地值到 `gitProfile.backup.*`（详见"use 与 rule 的优先级模型"）
 5. 设置当前项目 git config：
    - `git config gitProfile.name "<profile_name>"` — 显式标记当前使用的 profile
    - `git config user.name "xxx"`
@@ -186,23 +190,24 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 `git-profile use --clear` — 撤销所有 `use` 覆盖，恢复到首次 `use` 之前的原始状态。
 
 1. 检测当前目录是否为 git 仓库
-2. 检查 `gitProfile.name` 是否存在，不存在则提示"当前项目未被 use 覆盖"并退出
-3. 读取 `gitProfile.backup.*` 键逐一恢复：
-   - `gitProfile.backup.userName` 存在 → `git config user.name "<backup_value>"`
-   - `gitProfile.backup.userName` 不存在 → `git config --unset user.name`
-   - `gitProfile.backup.userEmail` / `gitProfile.backup.sshCommand` 同理
-4. 清除所有 `gitProfile.*` 键（`gitProfile.name`、`gitProfile.backup.*`）
+2. 检查 `git config --local gitProfile.name` 是否存在，不存在则提示"当前项目未被 use 覆盖"并退出
+3. 读取 `--local gitProfile.backup.*` 键逐一恢复：
+   - `git config --local gitProfile.backup.userName` 存在 → `git config user.name "<backup_value>"`
+   - 该 backup 键不存在 → `git config --local --unset user.name`
+   - `userEmail` / `sshCommand` 同理
+4. 清除所有本地 `gitProfile.*` 键（`git config --local --remove-section gitProfile`）
 5. 显示恢复结果，并提示当前生效的配置来源（原始本地值 / includeIf 规则 / 全局配置）
 
 ### current 流程
 
-通过 `git config gitProfile.name` 获取显式标记的 profile 名称，而非根据 user/email 反向推断。
+通过 `gitProfile.name` 获取显式标记的 profile 名称，而非根据 user/email 反向推断。
 
 识别逻辑：
-1. 读取 `git config gitProfile.name`
+1. 读取 `git config gitProfile.name`（不加 `--local`，读取最终生效值，包含 includeIf 片段）
 2. 如果存在，直接使用该值确定当前 profile
-3. 如果不存在，尝试匹配当前 user.name + user.email 与已知 profiles（作为 fallback，标注为"推断"）
-4. 如果都不匹配，显示当前 git 配置的原始值
+3. 判断来源：`git config --local gitProfile.name` 有值 → 来自 `use` 覆盖；无值但步骤 1 有值 → 来自 includeIf 规则
+4. 如果步骤 1 不存在，尝试匹配当前 user.name + user.email 与已知 profiles（作为 fallback，标注为"推断"）
+5. 如果都不匹配，显示当前 git 配置的原始值
 
 输出格式：
 
