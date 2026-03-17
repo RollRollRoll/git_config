@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# git-profile — manage per-context Git identities
+set -euo pipefail
+
+VERSION="0.1.0"
+
+# ── Environment-overridable config paths ─────────────────────────────────────
+CONF_FILE="${CONF_FILE:-${HOME}/.git-profiles.conf}"
+GITCONFIG_D="${GITCONFIG_D:-${HOME}/.gitconfig.d}"
+
+# ── Utility: resolve a path with realpath fallback ───────────────────────────
+resolve_path() {
+  local path="$1"
+  if command -v realpath &>/dev/null; then
+    realpath "$path" 2>/dev/null || echo "$path"
+  else
+    # Bash 3.2 compatible fallback
+    local dir base
+    dir="$(cd "$(dirname "$path")" 2>/dev/null && pwd)" || { echo "$path"; return; }
+    base="$(basename "$path")"
+    echo "${dir}/${base}"
+  fi
+}
+
+# ── Dependency check (Bash 3.2 compatible, no associative arrays) ─────────────
+check_dependencies() {
+  local missing=""
+  local deps="git ssh-keygen awk sed"
+  local dep
+  for dep in $deps; do
+    if ! command -v "$dep" &>/dev/null; then
+      missing="${missing} ${dep}"
+    fi
+  done
+  if [[ -n "$missing" ]]; then
+    echo "git-profile: missing required dependencies:${missing}" >&2
+    echo "Please install the missing tools and try again." >&2
+    exit 1
+  fi
+}
+
+# ── Help text ─────────────────────────────────────────────────────────────────
+show_help() {
+  cat <<EOF
+Usage: git-profile <subcommand> [options]
+
+Manage per-context Git identities via profiles.
+
+Subcommands:
+  list                     List all configured profiles
+  add                      Add or update a profile (interactive)
+  edit <profile>           Edit an existing profile
+  remove <profile>         Remove a profile
+  use <profile>            Apply a profile to the current repository
+  show [profile]           Show profile details
+  rule [add|list|remove]   Manage auto-apply rules
+  install                  Install shell integration and SSH config
+  check                    Check current repository's active profile
+
+Options:
+  --help       Show this help message
+  --version    Show version information
+
+Config file: ${CONF_FILE}
+Fragments:   ${GITCONFIG_D}/
+
+Examples:
+  git-profile add
+  git-profile list
+  git-profile use personal
+  git-profile rule add
+  git-profile rule list
+EOF
+}
+
+# ── Subcommand stubs ──────────────────────────────────────────────────────────
+
+cmd_list() {
+  echo "git-profile list: not yet implemented." >&2
+}
+
+cmd_add() {
+  echo "git-profile add: not yet implemented." >&2
+}
+
+cmd_edit() {
+  echo "git-profile edit: not yet implemented." >&2
+}
+
+cmd_remove() {
+  echo "git-profile remove: not yet implemented." >&2
+}
+
+cmd_use() {
+  echo "git-profile use: not yet implemented." >&2
+}
+
+cmd_show() {
+  echo "git-profile show: not yet implemented." >&2
+}
+
+cmd_install() {
+  echo "git-profile install: not yet implemented." >&2
+}
+
+cmd_check() {
+  echo "git-profile check: not yet implemented." >&2
+}
+
+cmd_rule() {
+  echo "git-profile rule: not yet implemented." >&2
+}
+
+interactive_rule_menu() {
+  echo "git-profile rule: interactive menu not yet implemented." >&2
+}
+
+# ── Main dispatcher ───────────────────────────────────────────────────────────
+main() {
+  check_dependencies
+
+  local cmd="${1:-}"
+
+  case "$cmd" in
+    --version|-V)
+      echo "git-profile version ${VERSION}"
+      ;;
+    --help|-h|help)
+      show_help
+      ;;
+    list)
+      shift
+      cmd_list "$@"
+      ;;
+    add)
+      shift
+      cmd_add "$@"
+      ;;
+    edit)
+      shift
+      cmd_edit "$@"
+      ;;
+    remove|rm)
+      shift
+      cmd_remove "$@"
+      ;;
+    use)
+      shift
+      cmd_use "$@"
+      ;;
+    show)
+      shift
+      cmd_show "$@"
+      ;;
+    install)
+      shift
+      cmd_install "$@"
+      ;;
+    check)
+      shift
+      cmd_check "$@"
+      ;;
+    rule)
+      shift
+      cmd_rule "$@"
+      ;;
+    "")
+      show_help
+      exit 0
+      ;;
+    *)
+      echo "git-profile: unknown subcommand '${cmd}'" >&2
+      echo "Run 'git-profile --help' for usage." >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
