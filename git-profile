@@ -182,6 +182,94 @@ get_rule_field() {
   done <<< "$parsed"
 }
 
+# ── Config writer helpers ──────────────────────────────────────────────────────
+
+# validate_profile_name: accepts [a-zA-Z0-9_-], rejects names starting with "rule"
+validate_profile_name() {
+  local name="$1"
+  if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "git-profile: invalid profile name '${name}'. Use only letters, digits, hyphens, underscores." >&2
+    return 1
+  fi
+  if [[ "$name" == rule* ]]; then
+    echo "git-profile: profile name may not start with 'rule'." >&2
+    return 1
+  fi
+}
+
+# delete_config_section: removes a section block from CONF_FILE
+# For a plain profile section, pass the section name (e.g. "personal")
+# For a rule section, pass "rule:rulename" (e.g. "rule:my-rule")
+delete_config_section() {
+  local section_arg="$1"
+  local conf="${CONF_FILE}"
+  [[ -f "$conf" ]] || return 0
+
+  local header_pattern
+  if [[ "$section_arg" == rule:* ]]; then
+    local rulename="${section_arg#rule:}"
+    header_pattern="[rule \"${rulename}\"]"
+  else
+    header_pattern="[${section_arg}]"
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+
+  awk -v hdr="$header_pattern" '
+    BEGIN { skip = 0 }
+    {
+      # Detect any section header
+      if ($0 ~ /^\[/) {
+        if ($0 == hdr) {
+          skip = 1
+        } else {
+          skip = 0
+        }
+      }
+      if (!skip) print
+    }
+  ' "$conf" > "$tmp"
+
+  mv "$tmp" "$conf"
+}
+
+# write_profile_section: writes (or overwrites) a [profile] section
+# Usage: write_profile_section name "Full Name" "email" "host" "ssh_key"
+write_profile_section() {
+  local name="$1" fullname="$2" email="$3" host="$4" ssh_key="$5"
+
+  # Delete existing section first
+  delete_config_section "$name"
+
+  # Append new section
+  {
+    echo ""
+    echo "[${name}]"
+    echo "name = ${fullname}"
+    echo "email = ${email}"
+    echo "host = ${host}"
+    echo "ssh_key = ${ssh_key}"
+  } >> "$CONF_FILE"
+}
+
+# write_rule_section: writes (or overwrites) a [rule "name"] section
+# Usage: write_rule_section rulename dir profile
+write_rule_section() {
+  local rulename="$1" dir="$2" profile="$3"
+
+  # Delete existing rule section first
+  delete_config_section "rule:${rulename}"
+
+  # Append new section
+  {
+    echo ""
+    echo "[rule \"${rulename}\"]"
+    echo "dir = ${dir}"
+    echo "profile = ${profile}"
+  } >> "$CONF_FILE"
+}
+
 # ── Subcommand implementations ────────────────────────────────────────────────
 
 cmd_list() {
@@ -292,6 +380,37 @@ interactive_rule_menu() {
   echo "git-profile rule: interactive menu not yet implemented." >&2
 }
 
+# ── Hidden internal commands (used by tests and other subcommands) ─────────────
+
+cmd_internal_write_profile() {
+  # Usage: _write_profile <name> <fullname> <email> <host> <ssh_key>
+  if [[ $# -lt 5 ]]; then
+    echo "Usage: git-profile _write_profile <name> <fullname> <email> <host> <ssh_key>" >&2
+    exit 1
+  fi
+  local name="$1" fullname="$2" email="$3" host="$4" ssh_key="$5"
+  validate_profile_name "$name"
+  write_profile_section "$name" "$fullname" "$email" "$host" "$ssh_key"
+}
+
+cmd_internal_delete_section() {
+  # Usage: _delete_section <section-name-or-rule:name>
+  if [[ $# -lt 1 ]]; then
+    echo "Usage: git-profile _delete_section <name>" >&2
+    exit 1
+  fi
+  delete_config_section "$1"
+}
+
+cmd_internal_write_rule() {
+  # Usage: _write_rule <rulename> <dir> <profile>
+  if [[ $# -lt 3 ]]; then
+    echo "Usage: git-profile _write_rule <rulename> <dir> <profile>" >&2
+    exit 1
+  fi
+  write_rule_section "$1" "$2" "$3"
+}
+
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 main() {
   check_dependencies
@@ -340,6 +459,19 @@ main() {
     rule)
       shift
       cmd_rule "$@"
+      ;;
+    # Hidden internal commands for testing and internal use
+    _write_profile)
+      shift
+      cmd_internal_write_profile "$@"
+      ;;
+    _delete_section)
+      shift
+      cmd_internal_delete_section "$@"
+      ;;
+    _write_rule)
+      shift
+      cmd_internal_write_rule "$@"
       ;;
     "")
       show_help

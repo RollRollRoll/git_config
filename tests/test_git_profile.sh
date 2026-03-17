@@ -145,4 +145,69 @@ test_parse_profiles
 test_parse_rules
 test_parse_empty_config
 
+# ── Task 3 tests ────────────────────────────────────────────────────────────
+
+test_write_profile_section() {
+  setup_test_home
+  echo "" > "$TEST_HOME/.git-profiles.conf"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" _write_profile test-prof "Test User" "test@mail.com" "github.com" "~/.ssh/key_test"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "written profile has section header" "[test-prof]" "$content"
+  assert_contains "written profile has name" "name = Test User" "$content"
+  assert_contains "written profile has email" "email = test@mail.com" "$content"
+  teardown_test_home
+}
+
+test_delete_profile_section() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+[keep-me]
+name = Keep
+email = keep@test.com
+host = github.com
+ssh_key = ~/.ssh/keep
+
+[delete-me]
+name = Delete
+email = del@test.com
+host = github.com
+ssh_key = ~/.ssh/del
+
+[also-keep]
+name = Also
+email = also@test.com
+host = github.com
+ssh_key = ~/.ssh/also
+EOF
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" _delete_section "delete-me"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "kept section still exists" "[keep-me]" "$content"
+  assert_contains "also-keep still exists" "[also-keep]" "$content"
+  if [[ "$content" == *"[delete-me]"* ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: delete-me should be removed but still exists"
+  else
+    PASS=$((PASS + 1))
+  fi
+  teardown_test_home
+}
+
+test_write_rule_section() {
+  setup_test_home
+  echo "" > "$TEST_HOME/.git-profiles.conf"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" _write_rule "my-rule" "/home/user/projects/" "personal"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "rule section header" '[rule "my-rule"]' "$content"
+  assert_contains "rule has dir" "dir = /home/user/projects/" "$content"
+  assert_contains "rule has profile" "profile = personal" "$content"
+  teardown_test_home
+}
+
+test_write_profile_section
+test_delete_profile_section
+test_write_rule_section
+
 report
