@@ -416,4 +416,53 @@ test_use_backup_and_clear
 test_use_clear_unsets_when_no_backup
 test_use_not_git_repo
 
+# --- Test: current command ---
+test_current_shows_use_profile() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+
+  local output
+  output="$(cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" current 2>&1)"
+  assert_contains "current shows profile name" "work" "$output"
+  assert_contains "current shows user name" "Work User" "$output"
+  assert_contains "current shows email" "work@company.com" "$output"
+  assert_contains "current shows source" "project config" "$output"
+  teardown_test_home
+}
+
+test_current_no_profile() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+  echo "" > "$TEST_HOME/.git-profiles.conf"
+
+  local output
+  output="$(cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" current 2>&1)"
+  assert_contains "current with no profile" "not set" "$(echo "$output" | tr '[:upper:]' '[:lower:]')"
+  teardown_test_home
+}
+
+test_current_not_git_repo() {
+  setup_test_home
+  local exit_code=0
+  (cd "$TEST_HOME" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" current 2>/dev/null) || exit_code=$?
+  assert_eq "current in non-git dir exits 1" "1" "$exit_code"
+  teardown_test_home
+}
+
+test_current_shows_use_profile
+test_current_no_profile
+test_current_not_git_repo
+
 report

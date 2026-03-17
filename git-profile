@@ -666,6 +666,77 @@ cmd_use() {
   done < <(git remote -v 2>/dev/null | awk '{print $2}' | sort -u)
 }
 
+cmd_current() {
+  # Ensure we're inside a git repo
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "git-profile: not inside a git repository." >&2
+    exit 1
+  fi
+
+  # Read effective profile (includes includeIf) and local profile
+  local effective_profile local_profile
+  effective_profile="$(git config gitProfile.name 2>/dev/null || true)"
+  local_profile="$(git config --local gitProfile.name 2>/dev/null || true)"
+
+  local profile_name="" source_label="" note=""
+
+  if [[ -n "$local_profile" ]]; then
+    # Profile set by `use` command (project config)
+    profile_name="$local_profile"
+    source_label="project config"
+    # Check if it's also overriding a rule
+    if [[ -n "$effective_profile" && "$effective_profile" != "$local_profile" ]]; then
+      note=" (overriding rule profile '${effective_profile}')"
+    fi
+  elif [[ -n "$effective_profile" ]]; then
+    # Profile from includeIf rule
+    profile_name="$effective_profile"
+    source_label="rule (includeIf)"
+  else
+    # No gitProfile.name set — try to infer from user.name + user.email
+    local cur_name_try cur_email_try
+    cur_name_try="$(git config user.name 2>/dev/null || true)"
+    cur_email_try="$(git config user.email 2>/dev/null || true)"
+
+    if [[ -n "$cur_name_try" || -n "$cur_email_try" ]]; then
+      # Try matching against known profiles
+      local pname matched_profile=""
+      while IFS= read -r pname; do
+        [[ -z "$pname" ]] && continue
+        local pf_name pf_email
+        pf_name="$(get_profile_field "$pname" "name")"
+        pf_email="$(get_profile_field "$pname" "email")"
+        if [[ "$pf_name" == "$cur_name_try" && "$pf_email" == "$cur_email_try" ]]; then
+          matched_profile="$pname"
+          break
+        fi
+      done < <(list_profile_names)
+
+      if [[ -n "$matched_profile" ]]; then
+        profile_name="$matched_profile"
+        source_label="inferred"
+      fi
+    fi
+  fi
+
+  # Display results
+  local cur_name cur_email
+  cur_name="$(git config user.name 2>/dev/null || echo '(not set)')"
+  cur_email="$(git config user.email 2>/dev/null || echo '(not set)')"
+
+  echo "Current Git identity:"
+  echo "  user.name  = ${cur_name}"
+  echo "  user.email = ${cur_email}"
+  echo ""
+  if [[ -n "$profile_name" ]]; then
+    echo "  Profile    = ${profile_name}${note}"
+    echo "  Source     = ${source_label}"
+  else
+    echo "  Profile    = (not set)"
+    echo "  Source     = (not set)"
+  fi
+}
+
 cmd_show() {
   echo "git-profile show: not yet implemented." >&2
 }
@@ -823,6 +894,10 @@ main() {
     check)
       shift
       cmd_check "$@"
+      ;;
+    current)
+      shift
+      cmd_current "$@"
       ;;
     rule)
       shift
