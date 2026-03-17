@@ -53,6 +53,8 @@ Subcommands:
   remove <profile>         Remove a profile
   use <profile>            Apply a profile to the current repository
   show [profile]           Show profile details
+  remote [show|set-ssh|set-https]
+                           Manage remote URLs (HTTPS ↔ SSH conversion)
   rule [add|list|remove]   Manage auto-apply rules
   install                  Install shell integration and SSH config
   check                    Check current repository's active profile
@@ -337,6 +339,75 @@ write_ssh_alias() {
   } >> "$ssh_config"
 }
 
+# ── URL conversion helpers ────────────────────────────────────────────────────
+
+# url_https_to_ssh: convert HTTPS URL to SSH format
+# Usage: url_https_to_ssh <https_url> <ssh_host>
+# Example: url_https_to_ssh "https://github.com/user/repo.git" "github.com"
+#          → git@github.com:user/repo.git
+# Example: url_https_to_ssh "https://github.com/user/repo" "github.com-work"
+#          → git@github.com-work:user/repo.git
+url_https_to_ssh() {
+  local url="$1" ssh_host="$2"
+
+  # Strip scheme
+  local without_scheme="${url#https://}"
+
+  # Split into host and path (host is everything before first /)
+  local orig_host="${without_scheme%%/*}"
+  local path="${without_scheme#*/}"
+
+  # Ensure path ends with .git
+  if [[ "$path" != *.git ]]; then
+    path="${path}.git"
+  fi
+
+  echo "git@${ssh_host}:${path}"
+}
+
+# url_ssh_to_https: convert SSH URL to HTTPS format
+# Usage: url_ssh_to_https <ssh_url> <real_host>
+# Example: url_ssh_to_https "git@github.com-work:user/repo.git" "github.com"
+#          → https://github.com/user/repo.git
+url_ssh_to_https() {
+  local url="$1" real_host="$2"
+
+  # Strip git@ prefix
+  local without_prefix="${url#git@}"
+
+  # Split at : into host and path
+  local path="${without_prefix#*:}"
+
+  echo "https://${real_host}/${path}"
+}
+
+# profile_ssh_host: return the SSH host for a profile
+# If multi-account on same host and SSH alias exists, returns host-profilename
+# Otherwise returns the raw host
+profile_ssh_host() {
+  local profile_name="$1"
+  local host
+  host="$(get_profile_field "$profile_name" "host")"
+
+  if [[ -z "$host" ]]; then
+    echo ""
+    return 1
+  fi
+
+  # Check if there are other profiles on the same host
+  if host_has_other_profiles "$host" "$profile_name"; then
+    # Multi-account scenario — check if SSH alias exists in ~/.ssh/config
+    local alias_host="${host}-${profile_name}"
+    local ssh_config="${HOME}/.ssh/config"
+    if [[ -f "$ssh_config" ]] && grep -q "Host ${alias_host}" "$ssh_config" 2>/dev/null; then
+      echo "$alias_host"
+      return 0
+    fi
+  fi
+
+  echo "$host"
+}
+
 # ── Add profile core logic ─────────────────────────────────────────────────────
 
 # _add_profile: core add logic
@@ -384,6 +455,13 @@ _add_profile_with_keygen() {
   # Ensure private key has correct permissions
   chmod 600 "$key_path"
 
+  # Display the public key for the user
+  echo ""
+  echo "Public key (add this to your Git platform):"
+  echo "---"
+  cat "${key_path}.pub"
+  echo "---"
+
   # Now call core add
   _add_profile "$name" "$fullname" "$email" "$host" "$key_path"
 }
@@ -410,19 +488,23 @@ cmd_list() {
     host="$(get_profile_field "$profile" "host")"
     ssh_key="$(get_profile_field "$profile" "ssh_key")"
     echo "  [${profile}]"
-    echo "    name    = ${name}"
-    echo "    email   = ${email}"
-    echo "    host    = ${host}"
-    echo "    ssh_key = ${ssh_key}"
+    echo "    Name:  ${name}"
+    echo "    Email: ${email}"
+    echo "    Host:  ${host}"
+    echo "    Key:   ${ssh_key}"
     echo ""
   done <<< "$names"
 }
 
 cmd_add() {
+  echo ""
+  echo "=== Add New Profile ==="
+  echo ""
+
   # ── 1. Profile name ──────────────────────────────────────────────────────
   local name=""
   while true; do
-    printf "Profile name (letters, digits, hyphens, underscores): "
+    printf "Profile name (e.g., personal, work): "
     read -r name
     if ! validate_profile_name "$name" 2>/dev/null; then
       echo "Invalid profile name. Please try again." >&2
@@ -446,7 +528,7 @@ cmd_add() {
   # ── 2. User name ─────────────────────────────────────────────────────────
   local fullname=""
   while [[ -z "$fullname" ]]; do
-    printf "Full name (e.g. Jane Smith): "
+    printf "User name: "
     read -r fullname
     if [[ -z "$fullname" ]]; then
       echo "Name cannot be empty." >&2
@@ -456,7 +538,7 @@ cmd_add() {
   # ── 3. Email ─────────────────────────────────────────────────────────────
   local email=""
   while [[ -z "$email" ]]; do
-    printf "Email address: "
+    printf "Email: "
     read -r email
     if [[ -z "$email" ]]; then
       echo "Email cannot be empty." >&2
@@ -466,7 +548,7 @@ cmd_add() {
   # ── 4. Host ───────────────────────────────────────────────────────────────
   local host=""
   while [[ -z "$host" ]]; do
-    printf "Git host (e.g. github.com): "
+    printf "Git platform host (e.g., github.com): "
     read -r host
     if [[ -z "$host" ]]; then
       echo "Host cannot be empty." >&2
@@ -494,7 +576,7 @@ cmd_add() {
       ;;
     *)
       # Generate new key — ask for algorithm
-      printf "Key algorithm (ed25519/rsa) [ed25519]: "
+      printf "Key algorithm [ed25519/rsa] (default: ed25519): "
       read -r algorithm
       algorithm="${algorithm:-ed25519}"
       _add_profile_with_keygen "$name" "$fullname" "$email" "$host" "$algorithm"
@@ -583,16 +665,16 @@ cmd_edit() {
   echo ""
 
   local new_name new_email new_host new_key
-  printf "Full name [%s]: " "$cur_name"
+  printf "  Name [%s]: " "$cur_name"
   read -r new_name
 
-  printf "Email [%s]: " "$cur_email"
+  printf "  Email [%s]: " "$cur_email"
   read -r new_email
 
-  printf "Host [%s]: " "$cur_host"
+  printf "  Host [%s]: " "$cur_host"
   read -r new_host
 
-  printf "SSH key path [%s]: " "$cur_key"
+  printf "  SSH Key [%s]: " "$cur_key"
   read -r new_key
 
   _edit_profile "$profile_arg" "$new_name" "$new_email" "$new_host" "$new_key"
@@ -662,13 +744,13 @@ _remove_profile() {
   if [[ -n "$referencing_rules" ]]; then
     local do_cascade="${GIT_PROFILE_AUTO_CONFIRM:-}"
     if [[ "$do_cascade" != "y" ]]; then
-      echo "The following rules reference profile '${name}':"
+      echo "Profile '${name}' is referenced by these rules:"
       local entry
       while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        echo "  ${entry%%:*}"
+        echo "  - ${entry%%:*}"
       done <<< "$referencing_rules"
-      printf "Remove these rules as well? [Y/n] "
+      printf "Delete these rules as well? [Y/n]: "
       read -r answer
       case "$answer" in
         [nN]*) do_cascade="n" ;;
@@ -701,7 +783,7 @@ _remove_profile() {
   if [[ -f "$fragment_file" ]]; then
     local do_remove="${GIT_PROFILE_AUTO_CONFIRM:-}"
     if [[ "$do_remove" != "y" ]]; then
-      printf "Remove gitconfig fragment '%s'? [Y/n] " "$fragment_file"
+      printf "Delete gitconfig fragment '%s'? [y/N] " "$fragment_file"
       read -r answer
       case "$answer" in
         [nN]*) do_remove="n" ;;
@@ -717,7 +799,7 @@ _remove_profile() {
   if [[ -n "$p_key" && -f "$p_key" ]]; then
     local do_delete_key="${GIT_PROFILE_AUTO_CONFIRM:-}"
     if [[ "$do_delete_key" != "y" ]]; then
-      printf "Delete SSH key files for '%s'? [y/N] " "$name"
+      printf "Delete SSH key '%s'? [y/N] " "$p_key"
       read -r answer
       case "$answer" in
         [yY]*) do_delete_key="y" ;;
@@ -905,15 +987,63 @@ cmd_use() {
   git config --local core.sshCommand "ssh -i \"${p_key}\" -o IdentitiesOnly=yes"
 
   echo "Switched to profile '${profile_arg}' in this repository."
+  echo "  Name:  ${p_name}"
+  echo "  Email: ${p_email}"
+  [[ -n "$p_key" ]] && echo "  Key:   ${p_key}"
 
-  # Warn about HTTPS remotes
-  local remote_url
-  while IFS= read -r remote_url; do
-    if [[ "$remote_url" == https://* ]]; then
-      echo "Warning: remote '${remote_url}' uses HTTPS — SSH key will not be used." >&2
-      break
+  # Check for HTTPS remotes and offer to convert
+  local https_remotes=""
+  local https_count=0
+  local rname rurl
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    rname="$(echo "$line" | awk '{print $1}')"
+    rurl="$(echo "$line" | awk '{print $2}')"
+    local rdir
+    rdir="$(echo "$line" | awk '{print $3}')"
+    [[ "$rdir" != "(fetch)" ]] && continue
+    if [[ "$rurl" == https://* ]]; then
+      https_remotes="${https_remotes}${rname} ${rurl}"$'\n'
+      https_count=$((https_count + 1))
     fi
-  done < <(git remote -v 2>/dev/null | awk '{print $2}' | sort -u)
+  done < <(git remote -v 2>/dev/null)
+
+  if [[ "$https_count" -gt 0 ]]; then
+    echo ""
+    echo "Warning: the following remotes use HTTPS — SSH key will not be used:"
+    local entry
+    while IFS= read -r entry; do
+      [[ -z "$entry" ]] && continue
+      rname="${entry%% *}"
+      rurl="${entry#* }"
+      echo "  ${rname}: ${rurl}"
+    done <<< "$https_remotes"
+
+    local ssh_host
+    ssh_host="$(profile_ssh_host "$profile_arg")"
+
+    local do_convert="${GIT_PROFILE_AUTO_CONFIRM:-}"
+    if [[ "$do_convert" != "y" && "$do_convert" != "n" ]]; then
+      printf "Convert to SSH? [y/N] "
+      read -r answer
+      case "$answer" in
+        [yY]*) do_convert="y" ;;
+        *)     do_convert="n" ;;
+      esac
+    fi
+
+    if [[ "$do_convert" == "y" ]]; then
+      while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        rname="${entry%% *}"
+        rurl="${entry#* }"
+        local new_url
+        new_url="$(url_https_to_ssh "$rurl" "$ssh_host")"
+        git remote set-url "$rname" "$new_url"
+        echo "  ${rname}: ${rurl} → ${new_url}"
+      done <<< "$https_remotes"
+    fi
+  fi
 }
 
 cmd_current() {
@@ -970,21 +1100,263 @@ cmd_current() {
   fi
 
   # Display results
-  local cur_name cur_email
-  cur_name="$(git config user.name 2>/dev/null || echo '(not set)')"
-  cur_email="$(git config user.email 2>/dev/null || echo '(not set)')"
-
-  echo "Current Git identity:"
-  echo "  user.name  = ${cur_name}"
-  echo "  user.email = ${cur_email}"
-  echo ""
   if [[ -n "$profile_name" ]]; then
-    echo "  Profile    = ${profile_name}${note}"
-    echo "  Source     = ${source_label}"
+    local p_name p_email p_host p_key
+    p_name="$(get_profile_field "$profile_name" "name")"
+    p_email="$(get_profile_field "$profile_name" "email")"
+    p_host="$(get_profile_field "$profile_name" "host")"
+    p_key="$(get_profile_field "$profile_name" "ssh_key")"
+
+    echo "Current Git Profile: ${profile_name}${note}"
+    echo "  Name:   ${p_name}"
+    echo "  Email:  ${p_email}"
+    [[ -n "$p_host" ]] && echo "  Host:   ${p_host}"
+    [[ -n "$p_key" ]]  && echo "  Key:    ${p_key}"
+    echo "  Source: ${source_label}"
   else
+    local cur_name cur_email
+    cur_name="$(git config user.name 2>/dev/null || echo '(not set)')"
+    cur_email="$(git config user.email 2>/dev/null || echo '(not set)')"
+
+    echo "Current Git identity:"
+    echo "  user.name  = ${cur_name}"
+    echo "  user.email = ${cur_email}"
+    echo ""
     echo "  Profile    = (not set)"
-    echo "  Source     = (not set)"
   fi
+}
+
+# ── Remote URL management ─────────────────────────────────────────────────────
+
+cmd_remote_show() {
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "git-profile: not inside a git repository." >&2
+    exit 1
+  fi
+
+  local profile_name
+  profile_name="$(git config gitProfile.name 2>/dev/null || true)"
+
+  echo "Remote URLs:"
+  if [[ -n "$profile_name" ]]; then
+    echo "  (active profile: ${profile_name})"
+  fi
+  echo ""
+
+  local found=0
+  local remote_name remote_url proto_label
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    remote_name="$(echo "$line" | awk '{print $1}')"
+    remote_url="$(echo "$line" | awk '{print $2}')"
+    local direction
+    direction="$(echo "$line" | awk '{print $3}')"
+    # Only show fetch URLs to avoid duplicates
+    [[ "$direction" != "(fetch)" ]] && continue
+
+    if [[ "$remote_url" == https://* ]]; then
+      proto_label="[HTTPS]"
+    elif [[ "$remote_url" == git@* ]]; then
+      proto_label="[SSH]"
+    elif [[ "$remote_url" == ssh://* ]]; then
+      proto_label="[SSH]"
+    else
+      proto_label="[OTHER]"
+    fi
+
+    echo "  ${remote_name}  ${remote_url}  ${proto_label}"
+    found=1
+  done < <(git remote -v 2>/dev/null)
+
+  if [[ "$found" -eq 0 ]]; then
+    echo "  (no remotes configured)"
+  fi
+}
+
+cmd_remote_set_ssh() {
+  local target_remote="${1:-}"
+
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "git-profile: not inside a git repository." >&2
+    exit 1
+  fi
+
+  # Get current profile
+  local profile_name
+  profile_name="$(git config gitProfile.name 2>/dev/null || true)"
+  if [[ -z "$profile_name" ]]; then
+    echo "git-profile: no active profile. Run 'git-profile use <profile>' first." >&2
+    exit 1
+  fi
+
+  # Get SSH host for this profile
+  local ssh_host
+  ssh_host="$(profile_ssh_host "$profile_name")"
+  if [[ -z "$ssh_host" ]]; then
+    echo "git-profile: cannot determine SSH host for profile '${profile_name}'." >&2
+    exit 1
+  fi
+
+  # Collect HTTPS remotes to convert
+  local remotes_to_convert=""
+  local count=0
+  local remote_name remote_url
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    remote_name="$(echo "$line" | awk '{print $1}')"
+    remote_url="$(echo "$line" | awk '{print $2}')"
+    local direction
+    direction="$(echo "$line" | awk '{print $3}')"
+    [[ "$direction" != "(fetch)" ]] && continue
+
+    # Filter by target remote if specified
+    if [[ -n "$target_remote" && "$remote_name" != "$target_remote" ]]; then
+      continue
+    fi
+
+    if [[ "$remote_url" == https://* ]]; then
+      remotes_to_convert="${remotes_to_convert}${remote_name} ${remote_url}"$'\n'
+      count=$((count + 1))
+    elif [[ "$remote_url" == ssh://* ]]; then
+      echo "Skipping '${remote_name}': unsupported URL format (ssh://)" >&2
+    fi
+  done < <(git remote -v 2>/dev/null)
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "All remotes are already using SSH."
+    return 0
+  fi
+
+  # Preview
+  echo "Converting remote URLs to SSH (profile: ${profile_name}, host: ${ssh_host}):"
+  local new_url
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    remote_name="${entry%% *}"
+    remote_url="${entry#* }"
+    new_url="$(url_https_to_ssh "$remote_url" "$ssh_host")"
+    echo "  ${remote_name}: ${remote_url} → ${new_url}"
+  done <<< "$remotes_to_convert"
+
+  # Confirm
+  local do_convert="${GIT_PROFILE_AUTO_CONFIRM:-}"
+  if [[ "$do_convert" != "y" ]]; then
+    printf "Proceed? [y/N] "
+    read -r answer
+    case "$answer" in
+      [yY]*) do_convert="y" ;;
+      *)     echo "Aborted."; return 1 ;;
+    esac
+  fi
+
+  # Execute
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    remote_name="${entry%% *}"
+    remote_url="${entry#* }"
+    new_url="$(url_https_to_ssh "$remote_url" "$ssh_host")"
+    git remote set-url "$remote_name" "$new_url"
+  done <<< "$remotes_to_convert"
+
+  echo "Done."
+}
+
+cmd_remote_set_https() {
+  local target_remote="${1:-}"
+
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "git-profile: not inside a git repository." >&2
+    exit 1
+  fi
+
+  # Get current profile
+  local profile_name
+  profile_name="$(git config gitProfile.name 2>/dev/null || true)"
+  if [[ -z "$profile_name" ]]; then
+    echo "git-profile: no active profile. Run 'git-profile use <profile>' first." >&2
+    exit 1
+  fi
+
+  # Get real host for this profile
+  local real_host
+  real_host="$(get_profile_field "$profile_name" "host")"
+  if [[ -z "$real_host" ]]; then
+    echo "git-profile: cannot determine host for profile '${profile_name}'." >&2
+    exit 1
+  fi
+
+  # Collect SSH remotes to convert
+  local remotes_to_convert=""
+  local count=0
+  local remote_name remote_url
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    remote_name="$(echo "$line" | awk '{print $1}')"
+    remote_url="$(echo "$line" | awk '{print $2}')"
+    local direction
+    direction="$(echo "$line" | awk '{print $3}')"
+    [[ "$direction" != "(fetch)" ]] && continue
+
+    # Filter by target remote if specified
+    if [[ -n "$target_remote" && "$remote_name" != "$target_remote" ]]; then
+      continue
+    fi
+
+    if [[ "$remote_url" == git@* ]]; then
+      remotes_to_convert="${remotes_to_convert}${remote_name} ${remote_url}"$'\n'
+      count=$((count + 1))
+    elif [[ "$remote_url" == ssh://* ]]; then
+      echo "Skipping '${remote_name}': unsupported URL format (ssh://)" >&2
+    fi
+  done < <(git remote -v 2>/dev/null)
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "All remotes are already using HTTPS."
+    return 0
+  fi
+
+  # Preview
+  echo "Converting remote URLs to HTTPS (profile: ${profile_name}, host: ${real_host}):"
+  local new_url
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    remote_name="${entry%% *}"
+    remote_url="${entry#* }"
+    new_url="$(url_ssh_to_https "$remote_url" "$real_host")"
+    echo "  ${remote_name}: ${remote_url} → ${new_url}"
+  done <<< "$remotes_to_convert"
+
+  # Confirm
+  local do_convert="${GIT_PROFILE_AUTO_CONFIRM:-}"
+  if [[ "$do_convert" != "y" ]]; then
+    printf "Proceed? [y/N] "
+    read -r answer
+    case "$answer" in
+      [yY]*) do_convert="y" ;;
+      *)     echo "Aborted."; return 1 ;;
+    esac
+  fi
+
+  # Execute
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    remote_name="${entry%% *}"
+    remote_url="${entry#* }"
+    new_url="$(url_ssh_to_https "$remote_url" "$real_host")"
+    git remote set-url "$remote_name" "$new_url"
+  done <<< "$remotes_to_convert"
+
+  echo "Done."
+}
+
+cmd_remote() {
+  local sub="${1:-}"
+  case "$sub" in
+    show|"")   cmd_remote_show ;;
+    set-ssh)   shift; cmd_remote_set_ssh "$@" ;;
+    set-https) shift; cmd_remote_set_https "$@" ;;
+    *)         echo "Usage: git-profile remote [show|set-ssh|set-https]" >&2; exit 1 ;;
+  esac
 }
 
 cmd_show() {
@@ -1081,7 +1453,10 @@ _rule_add() {
   local fragment_file="${GITCONFIG_D}/${profile}"
   git config --global "includeIf.gitdir:${norm_dir}.path" "$fragment_file"
 
-  echo "Rule '${rule_name}' added: ${norm_dir} -> profile '${profile}'"
+  echo ""
+  echo "Rule '${rule_name}' added."
+  echo "  Directory: ${norm_dir}"
+  echo "  Profile:   ${profile}"
 }
 
 # ── Rule subcommands ──────────────────────────────────────────────────────────
@@ -1141,7 +1516,7 @@ cmd_rule_list() {
     return 0
   fi
 
-  echo "Configured rules:"
+  echo "Directory rules:"
   echo ""
   local rule
   while IFS= read -r rule; do
@@ -1149,9 +1524,9 @@ cmd_rule_list() {
     local dir profile
     dir="$(get_rule_field "$rule" "dir")"
     profile="$(get_rule_field "$rule" "profile")"
-    echo "  [rule \"${rule}\"]"
-    echo "    dir     = ${dir}"
-    echo "    profile = ${profile}"
+    echo "  [${rule}]"
+    echo "    Directory: ${dir}"
+    echo "    Profile:   ${profile}"
     echo ""
   done <<< "$names"
 }
@@ -1245,6 +1620,7 @@ interactive_menu() {
     echo "6) 管理目录规则"
     echo "7) 查看当前身份"
     echo "8) 删除身份"
+    echo "9) 管理远程 URL"
     echo "0) 退出"
     echo ""
     read -rp "请选择: " choice
@@ -1258,10 +1634,30 @@ interactive_menu() {
       6) interactive_rule_menu ;;
       7) cmd_current ;;
       8) cmd_remove ;;
+      9) interactive_remote_menu ;;
       0) echo "Bye."; return ;;
       *) echo "Invalid choice." ;;
     esac
   done
+}
+
+interactive_remote_menu() {
+  echo ""
+  echo "Remote URL Management"
+  echo "━━━━━━━━━━━━━━━━━━━━━━"
+  echo "1) 查看远程 URL"
+  echo "2) 转换为 SSH"
+  echo "3) 转换为 HTTPS"
+  echo "0) 返回"
+  echo ""
+  read -rp "请选择: " choice
+  case "$choice" in
+    1) cmd_remote_show ;;
+    2) cmd_remote_set_ssh ;;
+    3) cmd_remote_set_https ;;
+    0) return ;;
+    *) echo "Invalid choice." ;;
+  esac
 }
 
 interactive_rule_menu() {
@@ -1381,6 +1777,10 @@ main() {
       shift
       cmd_current "$@"
       ;;
+    remote)
+      shift
+      cmd_remote "$@"
+      ;;
     rule)
       shift
       cmd_rule "$@"
@@ -1437,6 +1837,18 @@ main() {
         exit 1
       fi
       _remove_profile "$1"
+      ;;
+    _url_https_to_ssh)
+      shift
+      url_https_to_ssh "$1" "$2"
+      ;;
+    _url_ssh_to_https)
+      shift
+      url_ssh_to_https "$1" "$2"
+      ;;
+    _profile_ssh_host)
+      shift
+      profile_ssh_host "$1"
       ;;
     "")
       interactive_menu

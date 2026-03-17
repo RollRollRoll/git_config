@@ -271,7 +271,49 @@ Effective config:
   user.email = lijin@company.com
 ```
 
-### 场景九：修改已有身份
+### 场景九：管理远程 URL（HTTPS ↔ SSH 转换）
+
+当仓库 remote 使用 HTTPS URL 时，SSH 密钥不会生效。`git-profile` 可以自动转换：
+
+```bash
+# 查看当前仓库的远程 URL
+$ git-profile remote show
+Remote URLs:
+  (active profile: personal)
+
+  origin  https://github.com/user/repo.git  [HTTPS]
+
+# 转换为 SSH 格式
+$ git-profile remote set-ssh
+Converting remote URLs to SSH (profile: personal, host: github.com):
+  origin: https://github.com/user/repo.git → git@github.com:user/repo.git
+Proceed? [y/N] y
+Done.
+
+# 转换为 HTTPS 格式
+$ git-profile remote set-https
+Converting remote URLs to HTTPS (profile: personal, host: github.com):
+  origin: git@github.com:user/repo.git → https://github.com/user/repo.git
+Proceed? [y/N] y
+Done.
+```
+
+在执行 `use` 切换身份时，如果检测到 HTTPS remote，会自动提示是否转换：
+
+```bash
+$ git-profile use personal
+Switched to profile 'personal' in this repository.
+  Name:  kgfan
+  Email: kgfan@gmail.com
+  Key:   /Users/chenjinfan/.ssh/git_profile_personal
+
+Warning: the following remotes use HTTPS — SSH key will not be used:
+  origin: https://github.com/user/repo.git
+Convert to SSH? [y/N] y
+  origin: https://github.com/user/repo.git → git@github.com:user/repo.git
+```
+
+### 场景十：修改已有身份
 
 ```bash
 $ git-profile edit work
@@ -288,7 +330,7 @@ Profile 'work' updated.
 
 修改会同步更新关联的 `~/.gitconfig.d/work` 片段文件。
 
-### 场景十：删除身份
+### 场景十一：删除身份
 
 ```bash
 $ git-profile remove github-work
@@ -336,6 +378,9 @@ Git Profile Manager
 | `git-profile use` | 交互式选择身份 |
 | `git-profile use --clear` | 撤销 use 覆盖，恢复原始配置 |
 | `git-profile current` | 查看当前项目生效的身份 |
+| `git-profile remote` | 查看远程 URL |
+| `git-profile remote set-ssh` | 转换远程 URL 为 SSH 格式 |
+| `git-profile remote set-https` | 转换远程 URL 为 HTTPS 格式 |
 | `git-profile edit <name>` | 修改已有身份 |
 | `git-profile remove <name>` | 删除身份（含级联清理） |
 | `git-profile rule add` | 添加目录自动匹配规则 |

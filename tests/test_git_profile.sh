@@ -671,4 +671,219 @@ EOF
 test_remove_profile
 test_remove_with_rules_cascade
 
+# ── URL conversion tests ──────────────────────────────────────────────────────
+
+test_https_to_ssh_basic() {
+  local output
+  output="$("$GIT_PROFILE" _url_https_to_ssh "https://github.com/user/repo.git" "github.com")"
+  assert_eq "https→ssh basic" "git@github.com:user/repo.git" "$output"
+}
+
+test_https_to_ssh_no_git_suffix() {
+  local output
+  output="$("$GIT_PROFILE" _url_https_to_ssh "https://github.com/user/repo" "github.com")"
+  assert_eq "https→ssh auto-append .git" "git@github.com:user/repo.git" "$output"
+}
+
+test_https_to_ssh_alias_host() {
+  local output
+  output="$("$GIT_PROFILE" _url_https_to_ssh "https://github.com/user/repo.git" "github.com-work")"
+  assert_eq "https→ssh alias host" "git@github.com-work:user/repo.git" "$output"
+}
+
+test_ssh_to_https_basic() {
+  local output
+  output="$("$GIT_PROFILE" _url_ssh_to_https "git@github.com:user/repo.git" "github.com")"
+  assert_eq "ssh→https basic" "https://github.com/user/repo.git" "$output"
+}
+
+test_ssh_to_https_alias_host() {
+  local output
+  output="$("$GIT_PROFILE" _url_ssh_to_https "git@github.com-work:user/repo.git" "github.com")"
+  assert_eq "ssh→https alias host" "https://github.com/user/repo.git" "$output"
+}
+
+test_profile_ssh_host_single() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+[personal]
+name = User
+email = user@mail.com
+host = github.com
+ssh_key = ~/.ssh/key
+EOF
+  local output
+  output="$(CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" _profile_ssh_host "personal")"
+  assert_eq "profile_ssh_host single account returns raw host" "github.com" "$output"
+  teardown_test_home
+}
+
+test_profile_ssh_host_multi_with_alias() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+[personal]
+name = User
+email = user@mail.com
+host = github.com
+ssh_key = ~/.ssh/key_personal
+
+[work]
+name = Work
+email = work@mail.com
+host = github.com
+ssh_key = ~/.ssh/key_work
+EOF
+  # Create SSH config with alias
+  cat > "$TEST_HOME/.ssh/config" <<'EOF'
+# git-profile: work
+Host github.com-work
+  HostName github.com
+  IdentityFile ~/.ssh/key_work
+  IdentitiesOnly yes
+EOF
+  local output
+  output="$(CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" _profile_ssh_host "work")"
+  assert_eq "profile_ssh_host multi with alias returns alias" "github.com-work" "$output"
+  teardown_test_home
+}
+
+test_https_to_ssh_basic
+test_https_to_ssh_no_git_suffix
+test_https_to_ssh_alias_host
+test_ssh_to_https_basic
+test_ssh_to_https_alias_host
+test_profile_ssh_host_single
+test_profile_ssh_host_multi_with_alias
+
+# ── Remote command integration tests ─────────────────────────────────────────
+
+test_remote_set_ssh() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=n CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-ssh)
+
+  local new_url
+  new_url="$(cd "$repo" && git remote get-url origin)"
+  assert_eq "remote set-ssh converts URL" "git@github.com:user/repo.git" "$new_url"
+  teardown_test_home
+}
+
+test_remote_set_https() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "git@github.com:user/repo.git")
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-https)
+
+  local new_url
+  new_url="$(cd "$repo" && git remote get-url origin)"
+  assert_eq "remote set-https converts URL" "https://github.com/user/repo.git" "$new_url"
+  teardown_test_home
+}
+
+test_remote_set_ssh_multi_remotes() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+  (cd "$repo" && git remote add upstream "https://github.com/org/repo.git")
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=n CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-ssh)
+
+  local url_origin url_upstream
+  url_origin="$(cd "$repo" && git remote get-url origin)"
+  url_upstream="$(cd "$repo" && git remote get-url upstream)"
+  assert_eq "multi remote: origin converted" "git@github.com:user/repo.git" "$url_origin"
+  assert_eq "multi remote: upstream converted" "git@github.com:org/repo.git" "$url_upstream"
+  teardown_test_home
+}
+
+test_remote_show_output() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "https://github.com/user/repo.git")
+  (cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=n CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+
+  local output
+  output="$(cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote show 2>&1)"
+  assert_contains "remote show lists origin" "origin" "$output"
+  assert_contains "remote show shows URL" "https://github.com/user/repo.git" "$output"
+  assert_contains "remote show shows HTTPS label" "[HTTPS]" "$output"
+  teardown_test_home
+}
+
+test_remote_set_ssh_already_ssh() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && git remote add origin "git@github.com:user/repo.git")
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+
+  local output
+  output="$(cd "$repo" && GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" remote set-ssh 2>&1)"
+  assert_contains "already SSH shows message" "already using SSH" "$output"
+  teardown_test_home
+}
+
+test_remote_set_ssh
+test_remote_set_https
+test_remote_set_ssh_multi_remotes
+test_remote_show_output
+test_remote_set_ssh_already_ssh
+
 report
