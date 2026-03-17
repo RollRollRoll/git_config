@@ -2,7 +2,14 @@
 
 ## 概述
 
-一个 Shell (Bash) 脚本工具，用于在一台电脑上管理多个 Git 身份（SSH 密钥 + 用户名/邮箱），支持跨平台和同平台多账号场景。
+一个 Shell (Bash) 脚本工具，用于在一台电脑上管理多个 Git 身份（SSH 密钥 + 用户名/邮箱），支持多 Git 平台和同平台多账号场景。
+
+### 平台支持
+
+- **操作系统**：macOS、Linux（首版目标）
+- **Bash 版本**：3.2+（兼容 macOS 自带的 Bash）、4.0+ 均支持
+- **依赖工具**：`git`、`ssh-keygen`、`ssh`
+- **可选工具**：`realpath`（路径规范化时使用，macOS 需通过 `brew install coreutils` 安装；如不可用，回退到 `cd "$(dirname "$path")" && pwd` 方式解析）
 
 ## 使用场景
 
@@ -73,7 +80,7 @@ profile = work
 | `list` | 列出所有已配置的身份 | `git-profile list` |
 | `use <name>` | 在当前项目应用指定身份 | `git-profile use work` |
 | `use` | 无参数时列出身份让用户选择 | `git-profile use` |
-| `use --clear` | 清除项目级配置，恢复到目录规则/全局配置 | `git-profile use --clear` |
+| `use --clear` | 撤销所有 use 覆盖，恢复到首次 use 之前的原始状态 | `git-profile use --clear` |
 | `rule add` | 添加目录自动匹配规则 | `git-profile rule add` |
 | `rule list` | 查看已有目录规则 | `git-profile rule list` |
 | `rule remove` | 删除目录规则 | `git-profile rule remove` |
@@ -89,7 +96,7 @@ Git Profile Manager
 2) 修改身份
 3) 查看所有身份
 4) 切换当前项目身份
-5) 清除当前项目身份（恢复目录规则）
+5) 撤销身份覆盖（恢复原始配置）
 6) 管理目录规则
 7) 查看当前身份
 8) 删除身份
@@ -117,17 +124,19 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 
 这意味着一旦 `use` 写入项目级配置，目录规则就会被"压住"。为此引入以下机制：
 
-- **`use` 写入前备份** — 在覆盖前，将当前项目级 `user.name`、`user.email`、`core.sshCommand` 的本地值（如果存在）保存到 git config 的自定义 section：
+- **`use` 写入前备份（仅首次）** — 仅当 `gitProfile.name` 不存在时（即当前项目尚未被任何 `use` 覆盖），才备份当前项目级本地值到 `gitProfile.backup.*`：
   ```
   git config gitProfile.backup.userName "原值"
   git config gitProfile.backup.userEmail "原值"
   git config gitProfile.backup.sshCommand "原值"
   ```
-  如果某个键本地不存在，不写入对应 backup 键（表示"原本就没有"）
-- **`use --clear` 恢复逻辑** — 读取 backup 值：
+  如果某个键本地不存在，不写入对应 backup 键（表示"原本就没有"）。
+  后续连续 `use` 切换身份时（`gitProfile.name` 已存在），**不覆盖 backup**，始终保留首次 use 之前的原始状态。
+- **`use --clear` 语义：撤销所有 use 覆盖** — 恢复到首次 `use` 之前的原始状态，而非"撤销最近一次 use"：
   - backup 键存在 → 恢复为备份值
   - backup 键不存在 → `--unset` 该键（恢复到 rule/global）
   - 最后清除所有 `gitProfile.*` 键
+  - 示例：`use work` → `use personal` → `use --clear` → 恢复到 work 和 personal 之前的原始状态
 - **`use` 执行时的提示** — 如果检测到当前项目已在某条目录规则的覆盖范围内，显示提示："当前目录已匹配规则 `<rule_name>` (身份: `<profile>`)，`use` 会覆盖该规则。如需恢复，运行 `git-profile use --clear`"
 - **`current` 输出中体现覆盖关系** — 当项目级配置覆盖了 includeIf 规则时，在 Source 字段标注，如 `Source: project config (overrides rule: work-projects)`
 
@@ -165,7 +174,7 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 2. 读取身份信息
 3. 检测当前目录是否在某条目录规则覆盖范围内，如果是则提示：
    > 当前目录已匹配规则 "work-projects" (身份: work)，use 会覆盖该规则。如需恢复，运行 git-profile use --clear
-4. 备份当前项目级本地值（如果存在），写入 `gitProfile.backup.*`（详见"use 与 rule 的优先级模型"）
+4. 仅当 `gitProfile.name` 不存在时（首次 use），备份当前项目级本地值到 `gitProfile.backup.*`（详见"use 与 rule 的优先级模型"）
 5. 设置当前项目 git config：
    - `git config gitProfile.name "<profile_name>"` — 显式标记当前使用的 profile
    - `git config user.name "xxx"`
@@ -174,15 +183,16 @@ Git 配置优先级：project `.git/config` > includeIf > global `~/.gitconfig`�
 6. 检测 remote URL 协议类型，如果是 HTTPS 则提示"SSH 配置不影响 HTTPS remote，是否转换为 SSH URL？"
 7. 显示配置结果摘要
 
-`git-profile use --clear` — 恢复当前项目的 git 配置到 `use` 之前的状态。
+`git-profile use --clear` — 撤销所有 `use` 覆盖，恢复到首次 `use` 之前的原始状态。
 
 1. 检测当前目录是否为 git 仓库
-2. 读取 `gitProfile.backup.*` 键：
+2. 检查 `gitProfile.name` 是否存在，不存在则提示"当前项目未被 use 覆盖"并退出
+3. 读取 `gitProfile.backup.*` 键逐一恢复：
    - `gitProfile.backup.userName` 存在 → `git config user.name "<backup_value>"`
    - `gitProfile.backup.userName` 不存在 → `git config --unset user.name`
    - `gitProfile.backup.userEmail` / `gitProfile.backup.sshCommand` 同理
-3. 清除所有 `gitProfile.*` 键（`gitProfile.name`、`gitProfile.backup.*`）
-4. 显示恢复结果，并提示当前生效的配置来源（原始本地值 / includeIf 规则 / 全局配置）
+4. 清除所有 `gitProfile.*` 键（`gitProfile.name`、`gitProfile.backup.*`）
+5. 显示恢复结果，并提示当前生效的配置来源（原始本地值 / includeIf 规则 / 全局配置）
 
 ### current 流程
 
@@ -215,12 +225,12 @@ Current Git Profile: work
 ### rule add 流程
 
 1. 输入目录路径（如 `~/Project/work/`）
-2. **路径规范化处理**（在写入前执行）：
+2. **路径规范化处理**（在写入前执行，双路径策略）：
    - `~` 展开为 `$HOME` 绝对路径
    - 相对路径转换为绝对路径（基于 `pwd`）
-   - 解析符号链接，使用真实路径（`realpath`），因为 `gitdir:` 匹配的是 `.git` 目录的真实位置
+   - **路径存在时** → 使用 `realpath` 解析符号链接，因为 `gitdir:` 匹配的是 `.git` 目录的真实位置
+   - **路径不存在时** → 仅做上述 `~` 展开和绝对路径化，跳过 `realpath`，并警告："目录不存在，无法解析符号链接，如果路径包含符号链接，规则可能不会生效"
    - 确保尾部以 `/` 结尾（git 的 `gitdir:` 规则中尾部 `/` 表示递归匹配该目录下所有仓库，无 `/` 则精确匹配）
-   - 检查路径是否存在，不存在则警告但允许继续（目录可能尚未创建）
    - 规范化后的路径显示给用户确认
 3. 选择关联身份
 4. 保存到 `~/.git-profiles.conf` 的 `[rule "xxx"]` section（存储规范化后的绝对路径）
@@ -305,7 +315,7 @@ git_config/
 
 - `ssh-keygen` 失败 → 提示错误并中止，不写入配置
 - 配置文件不存在或格式错误 → 友好提示并提供修复建议
-- 依赖检查 — 启动时检查 `git`、`ssh-keygen`、`ssh` 可用性
+- 依赖检查 — 启动时检查 `git`、`ssh-keygen`、`ssh` 可用性；`realpath` 不可用时自动使用内置 fallback（`cd + pwd`）
 
 ## 安全考虑
 
