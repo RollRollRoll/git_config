@@ -505,8 +505,97 @@ cmd_add() {
   echo "Profile '${name}' added successfully."
 }
 
+# _edit_profile: core edit logic
+# Usage: _edit_profile <name> <new_name> <new_email> <new_host> <new_key>
+# Pass empty string "" to keep the current value
+_edit_profile() {
+  local profile="$1" new_fullname="$2" new_email="$3" new_host="$4" new_key="$5"
+
+  # Read current values
+  local cur_name cur_email cur_host cur_key
+  cur_name="$(get_profile_field "$profile" "name")"
+  if [[ -z "$cur_name" ]]; then
+    echo "git-profile: profile '${profile}' not found." >&2
+    exit 1
+  fi
+  cur_email="$(get_profile_field "$profile" "email")"
+  cur_host="$(get_profile_field "$profile" "host")"
+  cur_key="$(get_profile_field "$profile" "ssh_key")"
+
+  # Apply new values (keep existing if empty string passed)
+  local final_name final_email final_host final_key
+  final_name="${new_fullname:-$cur_name}"
+  final_email="${new_email:-$cur_email}"
+  final_host="${new_host:-$cur_host}"
+  final_key="${new_key:-$cur_key}"
+
+  # Rewrite profile section
+  write_profile_section "$profile" "$final_name" "$final_email" "$final_host" "$final_key"
+
+  # Update gitconfig.d fragment if it exists
+  local fragment_file="${GITCONFIG_D}/${profile}"
+  if [[ -f "$fragment_file" ]]; then
+    local expanded_key
+    expanded_key="${final_key/#\~/$HOME}"
+    write_gitconfig_fragment "$profile" "$final_name" "$final_email" "$expanded_key"
+  fi
+
+  echo "Profile '${profile}' updated."
+}
+
 cmd_edit() {
-  echo "git-profile edit: not yet implemented." >&2
+  local profile_arg="${1:-}"
+
+  if [[ -z "$profile_arg" ]]; then
+    # Interactive: list and prompt for profile name
+    local names
+    names="$(list_profile_names)"
+    if [[ -z "$names" ]]; then
+      echo "git-profile: no profiles configured. Run 'git-profile add' first." >&2
+      exit 1
+    fi
+    echo "Configured profiles:"
+    local pname
+    while IFS= read -r pname; do
+      [[ -z "$pname" ]] && continue
+      echo "  ${pname}"
+    done <<< "$names"
+    printf "Profile to edit: "
+    read -r profile_arg
+    if [[ -z "$profile_arg" ]]; then
+      echo "Aborted." >&2
+      return 1
+    fi
+  fi
+
+  # Read current values to show as defaults
+  local cur_name cur_email cur_host cur_key
+  cur_name="$(get_profile_field "$profile_arg" "name")"
+  if [[ -z "$cur_name" ]]; then
+    echo "git-profile: profile '${profile_arg}' not found." >&2
+    exit 1
+  fi
+  cur_email="$(get_profile_field "$profile_arg" "email")"
+  cur_host="$(get_profile_field "$profile_arg" "host")"
+  cur_key="$(get_profile_field "$profile_arg" "ssh_key")"
+
+  echo "Editing profile '${profile_arg}' (press Enter to keep current value):"
+  echo ""
+
+  local new_name new_email new_host new_key
+  printf "Full name [%s]: " "$cur_name"
+  read -r new_name
+
+  printf "Email [%s]: " "$cur_email"
+  read -r new_email
+
+  printf "Host [%s]: " "$cur_host"
+  read -r new_host
+
+  printf "SSH key path [%s]: " "$cur_key"
+  read -r new_key
+
+  _edit_profile "$profile_arg" "$new_name" "$new_email" "$new_host" "$new_key"
 }
 
 cmd_remove() {
@@ -1124,6 +1213,14 @@ main() {
         exit 1
       fi
       _rule_remove "$1"
+      ;;
+    _edit_profile)
+      shift
+      if [[ $# -lt 5 ]]; then
+        echo "Usage: git-profile _edit_profile <name> <new_name> <new_email> <new_host> <new_key>" >&2
+        exit 1
+      fi
+      _edit_profile "$1" "$2" "$3" "$4" "$5"
       ;;
     "")
       show_help

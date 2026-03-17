@@ -559,4 +559,43 @@ EOF
 
 test_rule_remove
 
+# ── Task 10 tests ────────────────────────────────────────────────────────────
+
+test_edit_updates_profile_and_fragment() {
+  setup_test_home
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Old Name
+email = old@mail.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+  mkdir -p "$TEST_HOME/.gitconfig.d"
+  cat > "$TEST_HOME/.gitconfig.d/work" <<EOF
+[gitProfile]
+  name = work
+[user]
+  name = Old Name
+  email = old@mail.com
+[core]
+  sshCommand = ssh -i $TEST_HOME/.ssh/git_profile_work -o IdentitiesOnly=yes
+EOF
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    GITCONFIG_D="$TEST_HOME/.gitconfig.d" \
+    "$GIT_PROFILE" _edit_profile "work" "New Name" "new@mail.com" "" ""
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "edit updates name in config" "name = New Name" "$content"
+  assert_contains "edit updates email in config" "email = new@mail.com" "$content"
+  assert_contains "edit preserves host" "host = gitlab.com" "$content"
+  local fragment
+  fragment="$(cat "$TEST_HOME/.gitconfig.d/work")"
+  assert_contains "fragment updated with new name" "name = New Name" "$fragment"
+  assert_contains "fragment updated with new email" "email = new@mail.com" "$fragment"
+  teardown_test_home
+}
+
+test_edit_updates_profile_and_fragment
+
 report
