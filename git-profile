@@ -836,6 +836,53 @@ _rule_add() {
 
 # ── Rule subcommands ──────────────────────────────────────────────────────────
 
+# _rule_remove: core rule remove logic
+# Usage: _rule_remove <rule_name>
+_rule_remove() {
+  local rule_name="$1"
+
+  # Read rule data before deleting
+  local rule_dir rule_profile
+  rule_dir="$(get_rule_field "$rule_name" "dir")"
+  rule_profile="$(get_rule_field "$rule_name" "profile")"
+
+  if [[ -z "$rule_dir" && -z "$rule_profile" ]]; then
+    echo "git-profile: rule '${rule_name}' not found." >&2
+    exit 1
+  fi
+
+  # Delete the rule section from config
+  delete_config_section "rule:${rule_name}"
+
+  # Remove the includeIf from global gitconfig
+  if [[ -n "$rule_dir" ]]; then
+    git config --global --unset "includeIf.gitdir:${rule_dir}.path" 2>/dev/null || true
+  fi
+
+  # Check if the fragment is still needed by other rules referencing the same profile
+  local still_needed="no"
+  local rname
+  while IFS= read -r rname; do
+    [[ -z "$rname" ]] && continue
+    local other_profile
+    other_profile="$(get_rule_field "$rname" "profile")"
+    if [[ "$other_profile" == "$rule_profile" ]]; then
+      still_needed="yes"
+      break
+    fi
+  done < <(list_rule_names)
+
+  # Remove fragment if no other rule references this profile
+  if [[ "$still_needed" == "no" && -n "$rule_profile" ]]; then
+    local fragment_file="${GITCONFIG_D}/${rule_profile}"
+    if [[ -f "$fragment_file" ]]; then
+      rm -f "$fragment_file"
+    fi
+  fi
+
+  echo "Rule '${rule_name}' removed."
+}
+
 cmd_rule_list() {
   local names
   names="$(list_rule_names)"
@@ -894,7 +941,30 @@ cmd_rule_add() {
 }
 
 cmd_rule_remove() {
-  echo "git-profile rule remove: not yet implemented." >&2
+  local rule_name="${1:-}"
+  if [[ -z "$rule_name" ]]; then
+    # Interactive: list rules and prompt
+    local names
+    names="$(list_rule_names)"
+    if [[ -z "$names" ]]; then
+      echo "No rules configured." >&2
+      return 0
+    fi
+    echo "Configured rules:"
+    local rname
+    while IFS= read -r rname; do
+      [[ -z "$rname" ]] && continue
+      echo "  ${rname}"
+    done <<< "$names"
+    printf "Rule name to remove: "
+    read -r rule_name
+    if [[ -z "$rule_name" ]]; then
+      echo "Aborted." >&2
+      return 1
+    fi
+  fi
+
+  _rule_remove "$rule_name"
 }
 
 cmd_rule() {
@@ -1046,6 +1116,14 @@ main() {
         exit 1
       fi
       _rule_add "$1" "$2" "$3"
+      ;;
+    _rule_remove)
+      shift
+      if [[ $# -lt 1 ]]; then
+        echo "Usage: git-profile _rule_remove <rule_name>" >&2
+        exit 1
+      fi
+      _rule_remove "$1"
       ;;
     "")
       show_help

@@ -521,4 +521,42 @@ EOF
 test_rule_add_normalizes_path
 test_rule_add_tilde_expansion
 
+# ── Task 9 tests ─────────────────────────────────────────────────────────────
+
+test_rule_remove() {
+  setup_test_home
+  mkdir -p "$TEST_HOME/projects"
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+
+[rule "work-rule"]
+dir = $TEST_HOME/projects/
+profile = work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+  mkdir -p "$TEST_HOME/.gitconfig.d"
+  echo "[user] name=test" > "$TEST_HOME/.gitconfig.d/work"
+  git config --global includeIf."gitdir:$TEST_HOME/projects/".path "$TEST_HOME/.gitconfig.d/work"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    GITCONFIG_D="$TEST_HOME/.gitconfig.d" \
+    GIT_PROFILE_AUTO_CONFIRM=y \
+    "$GIT_PROFILE" _rule_remove "work-rule"
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  if [[ "$content" == *'[rule "work-rule"]'* ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: rule section should be removed"
+  else
+    PASS=$((PASS + 1))
+  fi
+  assert_contains "profile preserved after rule remove" "[work]" "$content"
+  teardown_test_home
+}
+
+test_rule_remove
+
 report
