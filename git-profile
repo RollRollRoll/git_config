@@ -513,8 +513,157 @@ cmd_remove() {
   echo "git-profile remove: not yet implemented." >&2
 }
 
+cmd_use_clear() {
+  # Ensure we're inside a git repo
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "git-profile: not inside a git repository." >&2
+    exit 1
+  fi
+
+  # Check that a profile override exists
+  local current_profile
+  current_profile="$(git config --local gitProfile.name 2>/dev/null || true)"
+  if [[ -z "$current_profile" ]]; then
+    echo "git-profile: no override to clear in this repository." >&2
+    return 0
+  fi
+
+  # Restore or unset user.name
+  local backup_name
+  backup_name="$(git config --local gitProfile.backup.userName 2>/dev/null || true)"
+  if [[ -n "$backup_name" ]]; then
+    git config --local user.name "$backup_name"
+  else
+    git config --local --unset user.name 2>/dev/null || true
+  fi
+
+  # Restore or unset user.email
+  local backup_email
+  backup_email="$(git config --local gitProfile.backup.userEmail 2>/dev/null || true)"
+  if [[ -n "$backup_email" ]]; then
+    git config --local user.email "$backup_email"
+  else
+    git config --local --unset user.email 2>/dev/null || true
+  fi
+
+  # Restore or unset core.sshCommand
+  local backup_ssh
+  backup_ssh="$(git config --local gitProfile.backup.sshCommand 2>/dev/null || true)"
+  if [[ -n "$backup_ssh" ]]; then
+    git config --local core.sshCommand "$backup_ssh"
+  else
+    git config --local --unset core.sshCommand 2>/dev/null || true
+  fi
+
+  # Remove gitProfile and gitProfile "backup" sections
+  git config --local --remove-section gitProfile 2>/dev/null || true
+  git config --local --remove-section 'gitProfile "backup"' 2>/dev/null || true
+
+  echo "Cleared profile override for this repository."
+  echo ""
+  echo "Effective config:"
+  echo "  user.name  = $(git config user.name 2>/dev/null || echo '(not set)')"
+  echo "  user.email = $(git config user.email 2>/dev/null || echo '(not set)')"
+}
+
 cmd_use() {
-  echo "git-profile use: not yet implemented." >&2
+  local profile_arg="${1:-}"
+
+  # Handle --clear flag
+  if [[ "$profile_arg" == "--clear" ]]; then
+    cmd_use_clear
+    return
+  fi
+
+  # Ensure we're inside a git repo
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "git-profile: not inside a git repository." >&2
+    exit 1
+  fi
+
+  # If no profile name given, list profiles for selection
+  if [[ -z "$profile_arg" ]]; then
+    local names
+    names="$(list_profile_names)"
+    if [[ -z "$names" ]]; then
+      echo "git-profile: no profiles configured. Run 'git-profile add' first." >&2
+      exit 1
+    fi
+    echo "Available profiles:"
+    local i=1
+    local pname
+    while IFS= read -r pname; do
+      [[ -z "$pname" ]] && continue
+      echo "  $i) $pname"
+      i=$((i + 1))
+    done <<< "$names"
+    printf "Select profile: "
+    read -r selection
+    i=1
+    while IFS= read -r pname; do
+      [[ -z "$pname" ]] && continue
+      if [[ "$i" == "$selection" || "$pname" == "$selection" ]]; then
+        profile_arg="$pname"
+        break
+      fi
+      i=$((i + 1))
+    done <<< "$names"
+    if [[ -z "$profile_arg" ]]; then
+      echo "git-profile: invalid selection." >&2
+      exit 1
+    fi
+  fi
+
+  # Validate profile exists in config
+  local p_name p_email p_host p_key
+  p_name="$(get_profile_field "$profile_arg" "name")"
+  if [[ -z "$p_name" ]]; then
+    echo "git-profile: profile '${profile_arg}' not found." >&2
+    exit 1
+  fi
+  p_email="$(get_profile_field "$profile_arg" "email")"
+  p_host="$(get_profile_field "$profile_arg" "host")"
+  p_key="$(get_profile_field "$profile_arg" "ssh_key")"
+
+  # Expand ~ in key path
+  p_key="${p_key/#\~/$HOME}"
+
+  # Check if overriding an existing rule
+  local effective_profile local_profile
+  effective_profile="$(git config gitProfile.name 2>/dev/null || true)"
+  local_profile="$(git config --local gitProfile.name 2>/dev/null || true)"
+  if [[ -n "$effective_profile" && -z "$local_profile" ]]; then
+    echo "Warning: overriding rule-applied profile '${effective_profile}' with '${profile_arg}'." >&2
+  fi
+
+  # First-use backup (write-once): only when local gitProfile.name is EMPTY
+  if [[ -z "$local_profile" ]]; then
+    local orig_name orig_email orig_ssh
+    orig_name="$(git config --local user.name 2>/dev/null || true)"
+    orig_email="$(git config --local user.email 2>/dev/null || true)"
+    orig_ssh="$(git config --local core.sshCommand 2>/dev/null || true)"
+
+    [[ -n "$orig_name" ]]  && git config --local gitProfile.backup.userName "$orig_name"
+    [[ -n "$orig_email" ]] && git config --local gitProfile.backup.userEmail "$orig_email"
+    [[ -n "$orig_ssh" ]]   && git config --local gitProfile.backup.sshCommand "$orig_ssh"
+  fi
+
+  # Apply profile
+  git config --local gitProfile.name "$profile_arg"
+  git config --local user.name "$p_name"
+  git config --local user.email "$p_email"
+  git config --local core.sshCommand "ssh -i \"${p_key}\" -o IdentitiesOnly=yes"
+
+  echo "Switched to profile '${profile_arg}' in this repository."
+
+  # Warn about HTTPS remotes
+  local remote_url
+  while IFS= read -r remote_url; do
+    if [[ "$remote_url" == https://* ]]; then
+      echo "Warning: remote '${remote_url}' uses HTTPS — SSH key will not be used." >&2
+      break
+    fi
+  done < <(git remote -v 2>/dev/null | awk '{print $2}' | sort -u)
 }
 
 cmd_show() {

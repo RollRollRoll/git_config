@@ -297,4 +297,123 @@ test_add_profile_generates_key
 test_add_same_host_writes_ssh_alias
 test_add_single_account_no_ssh_config
 
+# --- Test: use command ---
+test_use_applies_config() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+
+  local got_name got_email got_ssh got_profile
+  got_name="$(cd "$repo" && git config --local user.name)"
+  got_email="$(cd "$repo" && git config --local user.email)"
+  got_ssh="$(cd "$repo" && git config --local core.sshCommand)"
+  got_profile="$(cd "$repo" && git config --local gitProfile.name)"
+
+  assert_eq "use sets user.name" "Work User" "$got_name"
+  assert_eq "use sets user.email" "work@company.com" "$got_email"
+  assert_contains "use sets sshCommand with key" "git_profile_work" "$got_ssh"
+  assert_contains "use sets sshCommand with IdentitiesOnly" "IdentitiesOnly=yes" "$got_ssh"
+  assert_eq "use sets gitProfile.name" "work" "$got_profile"
+  teardown_test_home
+}
+
+test_use_backup_and_clear() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+  (cd "$repo" && git config user.name "Original User")
+  (cd "$repo" && git config user.email "original@mail.com")
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+
+[personal]
+name = Personal User
+email = personal@mail.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_personal
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+  touch "$TEST_HOME/.ssh/git_profile_personal"
+
+  # First use: should backup original
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+  local backup_name
+  backup_name="$(cd "$repo" && git config --local gitProfile.backup.userName 2>/dev/null || echo "")"
+  assert_eq "backup saves original user.name" "Original User" "$backup_name"
+
+  # Second use: should NOT overwrite backup
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use personal)
+  backup_name="$(cd "$repo" && git config --local gitProfile.backup.userName 2>/dev/null || echo "")"
+  assert_eq "backup preserved after second use" "Original User" "$backup_name"
+
+  # Current name should be personal
+  local current_name
+  current_name="$(cd "$repo" && git config --local user.name)"
+  assert_eq "second use updates name" "Personal User" "$current_name"
+
+  # Clear: should restore original
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use --clear)
+  local restored_name
+  restored_name="$(cd "$repo" && git config --local user.name)"
+  assert_eq "clear restores original user.name" "Original User" "$restored_name"
+
+  # gitProfile section should be gone
+  local profile_marker
+  profile_marker="$(cd "$repo" && git config --local gitProfile.name 2>/dev/null || echo "GONE")"
+  assert_eq "clear removes gitProfile.name" "GONE" "$profile_marker"
+  teardown_test_home
+}
+
+test_use_clear_unsets_when_no_backup() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[work]
+name = Work User
+email = work@company.com
+host = gitlab.com
+ssh_key = $TEST_HOME/.ssh/git_profile_work
+EOF
+  touch "$TEST_HOME/.ssh/git_profile_work"
+
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work)
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use --clear)
+
+  local local_name
+  local_name="$(cd "$repo" && git config --local user.name 2>/dev/null || echo "UNSET")"
+  assert_eq "clear unsets when no backup" "UNSET" "$local_name"
+  teardown_test_home
+}
+
+test_use_not_git_repo() {
+  setup_test_home
+  local exit_code=0
+  (cd "$TEST_HOME" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use work 2>/dev/null) || exit_code=$?
+  assert_eq "use in non-git dir exits 1" "1" "$exit_code"
+  teardown_test_home
+}
+
+test_use_applies_config
+test_use_backup_and_clear
+test_use_clear_unsets_when_no_backup
+test_use_not_git_repo
+
 report
