@@ -38,9 +38,41 @@ echo "Git alias set: git profile -> git-profile"
 
 if [[ ":$PATH:" != *":$DEST:"* ]]; then
   echo ""
-  echo "Warning: '$DEST' is not in your PATH."
-  echo "Add this to your shell profile (~/.bashrc or ~/.zshrc):"
-  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  echo "'$DEST' is not in your PATH. Adding it now..."
+
+  # Detect shell RC file based on user's login shell (not the script's interpreter)
+  SHELL_RC=""
+  LOGIN_SHELL="$(basename "${SHELL:-bash}")"
+  case "$LOGIN_SHELL" in
+    zsh)  SHELL_RC="${HOME}/.zshrc" ;;
+    bash)
+      # Prefer .bash_profile (CentOS) or .profile (Ubuntu) for login shells,
+      # fall back to .bashrc
+      if [[ -f "${HOME}/.bash_profile" ]]; then
+        SHELL_RC="${HOME}/.bash_profile"
+      elif [[ -f "${HOME}/.profile" ]]; then
+        SHELL_RC="${HOME}/.profile"
+      else
+        SHELL_RC="${HOME}/.bashrc"
+      fi
+      ;;
+    *)
+      # Unknown shell — try .profile as POSIX fallback
+      SHELL_RC="${HOME}/.profile"
+      ;;
+  esac
+
+  PATH_LINE="export PATH=\"${DEST}:\$PATH\""
+
+  if ! grep -qF "$PATH_LINE" "$SHELL_RC" 2>/dev/null; then
+    echo "" >> "$SHELL_RC"
+    echo "# Added by git-profile installer" >> "$SHELL_RC"
+    echo "$PATH_LINE" >> "$SHELL_RC"
+    echo "Added to $SHELL_RC: $PATH_LINE"
+  else
+    echo "$SHELL_RC already contains the PATH entry."
+  fi
+  export PATH="${DEST}:$PATH"
 fi
 
 echo ""
