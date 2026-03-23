@@ -72,7 +72,9 @@ if [[ ":$PATH:" != *":$DEST:"* ]]; then
   else
     echo "$SHELL_RC already contains the PATH entry."
   fi
-  export PATH="${DEST}:$PATH"
+  echo ""
+  echo "To apply now, run:"
+  echo "  source $SHELL_RC"
 fi
 
 echo ""
