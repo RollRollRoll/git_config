@@ -124,6 +124,11 @@ corp    <公司仓库URL> (push)
 git remote add relay "<server-user>@<server-host>:/home/<server-user>/relay/repos/<project-name>.git"
 git remote -v
 ```
+或者
+```bash
+git remote add relay "ssh://<server-user>@<server-host>:<port>/home/<server-user>/relay/repos/<project-name>.git“
+git remote -v
+```
 
 预期结果应包含：
 
