@@ -88,6 +88,10 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
+## 扩展文档
+
+- [Git 多远程中转同步操作手册](docs/guides/2026-04-07-git-multi-remote-relay-sync.md)
+
 ## 使用指南
 
 ### 场景一：添加第一个身份
