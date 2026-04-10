@@ -1089,4 +1089,21 @@ test_add_keyless_no_ssh_alias() {
 
 test_add_keyless_no_ssh_alias
 
+test_add_keyless_interactive() {
+  setup_test_home
+  # 输入序列：profile名 / 用户名 / 邮箱 / host / 不绑定密钥(n)
+  printf "keyless-iact\nKeyless User\nkeyless@mail.com\ngithub.com\nn\n" | \
+    CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" add >/dev/null 2>&1 || true
+
+  local content
+  content="$(cat "$TEST_HOME/.git-profiles.conf")"
+  assert_contains "interactive keyless creates section" "[keyless-iact]" "$content"
+  assert_contains "interactive keyless writes name" "name = Keyless User" "$content"
+  assert_contains "interactive keyless writes email" "email = keyless@mail.com" "$content"
+  assert_contains "interactive keyless has ssh_key line" "ssh_key = " "$content"
+  teardown_test_home
+}
+
+test_add_keyless_interactive
+
 report

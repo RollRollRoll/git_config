@@ -556,31 +556,42 @@ cmd_add() {
     fi
   done
 
-  # ── 5. SSH key: generate new or use existing ──────────────────────────────
-  printf "Generate a new SSH key? [Y/n] "
-  read -r gen_key
-  case "$gen_key" in
+  # ── 5. SSH key: bind or skip ──────────────────────────────────────────────
+  printf "需要绑定 SSH 密钥？[Y/n] "
+  read -r need_key
+  case "$need_key" in
     [nN]*)
-      # Use existing key
-      local key_path=""
-      while [[ -z "$key_path" ]]; do
-        printf "Path to existing SSH private key: "
-        read -r key_path
-        if [[ -z "$key_path" ]]; then
-          echo "Key path cannot be empty." >&2
-        elif [[ ! -f "$key_path" ]]; then
-          echo "File not found: ${key_path}" >&2
-          key_path=""
-        fi
-      done
-      _add_profile "$name" "$fullname" "$email" "$host" "$key_path"
+      # 不绑定密钥
+      _add_profile "$name" "$fullname" "$email" "$host" ""
       ;;
     *)
-      # Generate new key — ask for algorithm
-      printf "Key algorithm [ed25519/rsa] (default: ed25519): "
-      read -r algorithm
-      algorithm="${algorithm:-ed25519}"
-      _add_profile_with_keygen "$name" "$fullname" "$email" "$host" "$algorithm"
+      # ── 5a. Generate new or use existing ─────────────────────────────────
+      printf "Generate a new SSH key? [Y/n] "
+      read -r gen_key
+      case "$gen_key" in
+        [nN]*)
+          # Use existing key
+          local key_path=""
+          while [[ -z "$key_path" ]]; do
+            printf "Path to existing SSH private key: "
+            read -r key_path
+            if [[ -z "$key_path" ]]; then
+              echo "Key path cannot be empty." >&2
+            elif [[ ! -f "$key_path" ]]; then
+              echo "File not found: ${key_path}" >&2
+              key_path=""
+            fi
+          done
+          _add_profile "$name" "$fullname" "$email" "$host" "$key_path"
+          ;;
+        *)
+          # Generate new key — ask for algorithm
+          printf "Key algorithm [ed25519/rsa] (default: ed25519): "
+          read -r algorithm
+          algorithm="${algorithm:-ed25519}"
+          _add_profile_with_keygen "$name" "$fullname" "$email" "$host" "$algorithm"
+          ;;
+      esac
       ;;
   esac
 
