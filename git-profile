@@ -422,7 +422,8 @@ _add_profile() {
   write_profile_section "$name" "$fullname" "$email" "$host" "$key_path"
 
   # After writing, check if this host is used by any OTHER profile
-  if host_has_other_profiles "$host" "$name"; then
+  # 无密钥时跳过 SSH alias 逻辑（不存在密钥冲突问题）
+  if [[ -n "$key_path" ]] && host_has_other_profiles "$host" "$name"; then
     # Multiple accounts on the same host — need SSH alias
     local do_write="${GIT_PROFILE_AUTO_CONFIRM:-}"
     if [[ "$do_write" != "y" ]]; then

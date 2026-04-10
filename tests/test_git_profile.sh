@@ -1061,4 +1061,32 @@ test_remote_set_ssh_already_ssh
 test_remote_set_https_single_remote
 test_remote_set_https_missing_remote
 
+# ── Task: keyless profile ────────────────────────────────────────────────────
+
+test_add_keyless_no_ssh_alias() {
+  setup_test_home
+  # 先添加有密钥的 profile，占用 github.com
+  touch "$TEST_HOME/.ssh/git_profile_first"
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _add_profile "first" "First" "first@mail.com" "github.com" \
+    "$TEST_HOME/.ssh/git_profile_first"
+
+  # 再添加无密钥的 profile，同 host — 不应写 SSH alias
+  touch "$TEST_HOME/.ssh/config"
+  GIT_PROFILE_AUTO_CONFIRM=y CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+    "$GIT_PROFILE" _add_profile "keyless" "Keyless" "keyless@mail.com" "github.com" ""
+
+  local ssh_config
+  ssh_config="$(cat "$TEST_HOME/.ssh/config" 2>/dev/null || echo "")"
+  if [[ "$ssh_config" == *"keyless"* ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: keyless profile should not write SSH alias, got: $ssh_config"
+  else
+    PASS=$((PASS + 1))
+  fi
+  teardown_test_home
+}
+
+test_add_keyless_no_ssh_alias
+
 report
