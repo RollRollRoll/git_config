@@ -1152,4 +1152,73 @@ EOF
 test_use_keyless_no_sshcommand
 test_use_keyless_preserves_sshcommand
 
+test_fragment_keyless_no_sshcommand() {
+  setup_test_home
+  mkdir -p "$TEST_HOME/work"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+[keyless]
+name = Keyless User
+email = keyless@mail.com
+host = github.com
+ssh_key =
+EOF
+
+  GIT_CONFIG_GLOBAL="$TEST_HOME/.gitconfig" \
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+  GITCONFIG_D="$TEST_HOME/.gitconfig.d" \
+    "$GIT_PROFILE" _rule_add "myrule" "$TEST_HOME/work/" "keyless" >/dev/null 2>&1
+
+  local fragment_file="$TEST_HOME/.gitconfig.d/keyless"
+  if [[ ! -f "$fragment_file" ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: fragment file not created at $fragment_file"
+    teardown_test_home
+    return
+  fi
+
+  local fragment
+  fragment="$(cat "$fragment_file")"
+  assert_contains "keyless fragment has gitProfile.name" "name = keyless" "$fragment"
+  assert_contains "keyless fragment has user.name" "name = Keyless User" "$fragment"
+  assert_contains "keyless fragment has user.email" "email = keyless@mail.com" "$fragment"
+
+  if [[ "$fragment" == *"sshCommand"* ]]; then
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\nFAIL: keyless fragment should not contain sshCommand, got:\n$fragment"
+  else
+    PASS=$((PASS + 1))
+  fi
+  teardown_test_home
+}
+
+test_fragment_keyed_has_sshcommand() {
+  setup_test_home
+  mkdir -p "$TEST_HOME/work"
+  touch "$TEST_HOME/.ssh/git_profile_keyed"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<EOF
+[keyed]
+name = Keyed User
+email = keyed@mail.com
+host = github.com
+ssh_key = $TEST_HOME/.ssh/git_profile_keyed
+EOF
+
+  GIT_CONFIG_GLOBAL="$TEST_HOME/.gitconfig" \
+  CONF_FILE="$TEST_HOME/.git-profiles.conf" \
+  GITCONFIG_D="$TEST_HOME/.gitconfig.d" \
+    "$GIT_PROFILE" _rule_add "keyed-rule" "$TEST_HOME/work/" "keyed" >/dev/null 2>&1
+
+  local fragment_file="$TEST_HOME/.gitconfig.d/keyed"
+  local fragment
+  fragment="$(cat "$fragment_file")"
+  assert_contains "keyed fragment has sshCommand" "sshCommand" "$fragment"
+  assert_contains "keyed fragment references key path" "git_profile_keyed" "$fragment"
+  teardown_test_home
+}
+
+test_fragment_keyless_no_sshcommand
+test_fragment_keyed_has_sshcommand
+
 report

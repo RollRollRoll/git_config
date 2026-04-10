@@ -1444,7 +1444,8 @@ write_gitconfig_fragment() {
 
   mkdir -p "$GITCONFIG_D"
 
-  cat > "$fragment_file" <<EOF
+  if [[ -n "$key_path" ]]; then
+    cat > "$fragment_file" <<EOF
 [gitProfile]
   name = ${profile}
 [user]
@@ -1453,6 +1454,16 @@ write_gitconfig_fragment() {
 [core]
   sshCommand = ssh -i "${key_path}" -o IdentitiesOnly=yes
 EOF
+  else
+    # 无密钥：不写 sshCommand，仅覆盖用户身份
+    cat > "$fragment_file" <<EOF
+[gitProfile]
+  name = ${profile}
+[user]
+  name = ${fullname}
+  email = ${email}
+EOF
+  fi
 }
 
 # _rule_add: core rule add logic
