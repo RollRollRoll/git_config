@@ -996,7 +996,10 @@ cmd_use() {
   git config --local gitProfile.name "$profile_arg"
   git config --local user.name "$p_name"
   git config --local user.email "$p_email"
-  git config --local core.sshCommand "ssh -i \"${p_key}\" -o IdentitiesOnly=yes"
+  # 无密钥时不写 core.sshCommand，保留用户已有配置（或不设置）
+  if [[ -n "$p_key" ]]; then
+    git config --local core.sshCommand "ssh -i \"${p_key}\" -o IdentitiesOnly=yes"
+  fi
 
   echo "Switched to profile '${profile_arg}' in this repository."
   echo "  Name:  ${p_name}"

@@ -1106,4 +1106,50 @@ test_add_keyless_interactive() {
 
 test_add_keyless_interactive
 
+test_use_keyless_no_sshcommand() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+[keyless]
+name = Keyless User
+email = keyless@mail.com
+host = github.com
+ssh_key =
+EOF
+
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use keyless) >/dev/null 2>&1
+
+  local got_ssh
+  got_ssh="$(cd "$repo" && git config --local core.sshCommand 2>/dev/null || echo "NOT_SET")"
+  assert_eq "keyless use does not write sshCommand" "NOT_SET" "$got_ssh"
+  teardown_test_home
+}
+
+test_use_keyless_preserves_sshcommand() {
+  setup_test_home
+  local repo="$TEST_HOME/myrepo"
+  git init -q "$repo"
+  (cd "$repo" && git config core.sshCommand "ssh -i /existing/key")
+
+  cat > "$TEST_HOME/.git-profiles.conf" <<'EOF'
+[keyless]
+name = Keyless User
+email = keyless@mail.com
+host = github.com
+ssh_key =
+EOF
+
+  (cd "$repo" && CONF_FILE="$TEST_HOME/.git-profiles.conf" "$GIT_PROFILE" use keyless) >/dev/null 2>&1
+
+  local got_ssh
+  got_ssh="$(cd "$repo" && git config --local core.sshCommand 2>/dev/null || echo "")"
+  assert_eq "keyless use preserves existing sshCommand" "ssh -i /existing/key" "$got_ssh"
+  teardown_test_home
+}
+
+test_use_keyless_no_sshcommand
+test_use_keyless_preserves_sshcommand
+
 report
