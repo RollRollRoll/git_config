@@ -465,9 +465,9 @@ git-relay config
 
 | 参数 | 说明 | 默认值 / 示例 |
 |---|---|---|
-| `server_user` | 外网服务器用户名 | `gitrelay` |
-| `server_host` | 外网服务器地址 | `1.2.3.4` |
-| `ssh_port` | SSH 端口 | `22` |
+| `server_host` | 外网服务器地址或 SSH Host 别名 | `1.2.3.4` 或 `relay-server` |
+| `server_user` | 外网服务器用户名（**可选**，SSH config 中有则留空） | `gitrelay` |
+| `ssh_port` | SSH 端口（**可选**，SSH config 中有则留空） | `2222` |
 | `project_name` | 项目名（默认预填目录名） | `my-app` |
 | `default_branch` | 默认分支 | `main` |
 | `corp_remote` | 公司仓库 remote 名 | `corp` |
@@ -603,28 +603,34 @@ git-relay feature-clean my-feature
 
 ### 格式
 
+**完整配置（显式指定所有项）：**
+
 ```ini
-server_user=gitrelay
 server_host=1.2.3.4
+server_user=gitrelay
 ssh_port=22
 project_name=my-app
 default_branch=main
-corp_remote=corp          # 可自定义，默认 corp
-relay_remote=relay        # 可自定义，默认 relay
-corp_url=git@corp.example.com:team/my-app.git  # 可省略（若 corp_remote 已存在）
-
-# 服务器路径（可选，不填则使用默认派生路径）
-# server_bare_path=/home/gitrelay/relay/repos/my-app.git
-# server_work_path=/home/gitrelay/relay/worktrees/my-app
+corp_remote=corp
+relay_remote=relay
+corp_url=git@corp.example.com:team/my-app.git
 ```
 
-路径默认派生规则：
+**使用 SSH config Host 别名时的最简配置：**
+
+```ini
+server_host=relay-server   # 对应 ~/.ssh/config 中的 Host 别名
+project_name=my-app
+default_branch=main
+```
+
+`server_user` 和 `ssh_port` 留空时，SSH 连接和 git remote URL 均直接使用 `server_host`，由 `~/.ssh/config` 中的别名提供用户名和端口。若同时省略了 `server_bare_path` / `server_work_path`，脚本会通过一次 `whoami` SSH 调用解析远端用户名来派生默认路径。
+
+**路径默认派生规则：**
 - 裸仓库：`/home/<server_user>/relay/repos/<project_name>.git`
 - 工作区：`/home/<server_user>/relay/worktrees/<project_name>`
 
-路径与默认值一致时不会写入配置文件，保持配置简洁。
-
-权限自动设为 `600`。
+路径与默认值一致时不会写入配置文件，保持简洁。权限自动设为 `600`。
 
 ### 多项目管理
 

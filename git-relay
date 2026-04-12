@@ -152,11 +152,12 @@ conf_set() {
 load_conf() {
   [[ -f "$CONF_FILE" ]] || die "未找到配置文件 ${CONF_FILE}，请先运行: git-relay config"
 
-  RELAY_SERVER_USER="$(conf_get server_user 2>/dev/null)" || die "配置缺少 server_user，请重新运行: git-relay config"
+  # server_user / ssh_port 为可选项，不填时依赖 ~/.ssh/config 中的 Host 别名
+  RELAY_SERVER_USER="$(conf_get server_user 2>/dev/null || echo '')"
   RELAY_SERVER_HOST="$(conf_get server_host 2>/dev/null)" || die "配置缺少 server_host，请重新运行: git-relay config"
   RELAY_PROJECT="$(conf_get project_name 2>/dev/null)"    || die "配置缺少 project_name，请重新运行: git-relay config"
   RELAY_BRANCH="$(conf_get default_branch 2>/dev/null)"   || die "配置缺少 default_branch，请重新运行: git-relay config"
-  RELAY_SSH_PORT="$(conf_get ssh_port 2>/dev/null || echo 22)"
+  RELAY_SSH_PORT="$(conf_get ssh_port 2>/dev/null || echo '')"
 
   # 可自定义的 remote 名称，默认 corp / relay
   RELAY_CORP_REMOTE="$(conf_get corp_remote 2>/dev/null || echo 'corp')"
@@ -166,17 +167,39 @@ load_conf() {
   RELAY_CORP_URL="$(conf_get corp_url 2>/dev/null || git remote get-url "$RELAY_CORP_REMOTE" 2>/dev/null || echo '')"
   [[ -n "$RELAY_CORP_URL" ]] || die "无法确定公司仓库 URL，请重新运行: git-relay config"
 
-  # 服务器路径：优先读取自定义配置，否则使用默认派生路径
-  local _default_bare="/home/${RELAY_SERVER_USER}/relay/repos/${RELAY_PROJECT}.git"
-  local _default_work="/home/${RELAY_SERVER_USER}/relay/worktrees/${RELAY_PROJECT}"
-  RELAY_BARE_PATH="$(conf_get server_bare_path 2>/dev/null || echo "$_default_bare")"
-  RELAY_WORK_PATH="$(conf_get server_work_path 2>/dev/null || echo "$_default_work")"
-
-  # relay remote URL
-  if [[ "$RELAY_SSH_PORT" == "22" ]]; then
-    RELAY_REMOTE_URL="${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}:${RELAY_BARE_PATH}"
+  # SSH 连接目标：有 server_user 则用 user@host，否则直接用 host（依赖 SSH config）
+  if [[ -n "$RELAY_SERVER_USER" ]]; then
+    RELAY_SSH_TARGET="${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}"
   else
-    RELAY_REMOTE_URL="ssh://${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}:${RELAY_SSH_PORT}${RELAY_BARE_PATH}"
+    RELAY_SSH_TARGET="${RELAY_SERVER_HOST}"
+  fi
+
+  # 服务器路径：优先读取自定义配置，否则派生默认路径
+  # server_user 为空时，若无自定义路径则通过 SSH 解析远端用户名（只查询一次）
+  local _custom_bare _custom_work
+  _custom_bare="$(conf_get server_bare_path 2>/dev/null || echo '')"
+  _custom_work="$(conf_get server_work_path 2>/dev/null || echo '')"
+
+  if [[ -n "$_custom_bare" && -n "$_custom_work" ]]; then
+    RELAY_BARE_PATH="$_custom_bare"
+    RELAY_WORK_PATH="$_custom_work"
+  else
+    # 需要用户名来派生默认路径
+    local _path_user="$RELAY_SERVER_USER"
+    if [[ -z "$_path_user" ]]; then
+      info "server_user 未配置，正在通过 SSH 解析服务器用户名..."
+      _path_user="$(ssh "$RELAY_SSH_TARGET" 'whoami' 2>/dev/null)" || \
+        die "无法获取服务器用户名，请配置 server_user 或显式指定 server_bare_path / server_work_path"
+    fi
+    RELAY_BARE_PATH="${_custom_bare:-/home/${_path_user}/relay/repos/${RELAY_PROJECT}.git}"
+    RELAY_WORK_PATH="${_custom_work:-/home/${_path_user}/relay/worktrees/${RELAY_PROJECT}}"
+  fi
+
+  # relay remote URL：有非标端口则用 ssh:// 格式，否则用 scp 格式
+  if [[ -n "$RELAY_SSH_PORT" && "$RELAY_SSH_PORT" != "22" ]]; then
+    RELAY_REMOTE_URL="ssh://${RELAY_SSH_TARGET}:${RELAY_SSH_PORT}${RELAY_BARE_PATH}"
+  else
+    RELAY_REMOTE_URL="${RELAY_SSH_TARGET}:${RELAY_BARE_PATH}"
   fi
 }
 
@@ -199,6 +222,19 @@ prompt_input() {
   printf -v "$var_name" '%s' "$input"
 }
 
+# prompt_input_optional — 允许留空，留空时变量设为空字符串
+prompt_input_optional() {
+  local prompt="$1" var_name="$2" default="${3:-}"
+  local input
+  if [[ -n "$default" ]]; then
+    read -r -p "$(echo -e "${_c_cyan}${prompt}${_c_reset} [${default}]: ")" input
+    input="${input:-$default}"
+  else
+    read -r -p "$(echo -e "${_c_cyan}${prompt}${_c_reset} (可留空): ")" input
+  fi
+  printf -v "$var_name" '%s' "$input"
+}
+
 # 确认提示：confirm <提示>，返回 0=确认 1=取消
 confirm() {
   local prompt="$1"
@@ -213,11 +249,12 @@ confirm() {
 ssh_run() {
   local cmd="$1"
   local ssh_opts="-o StrictHostKeyChecking=accept-new"
-  if [[ "${RELAY_SSH_PORT}" != "22" ]]; then
+  # 仅在显式配置了非标端口时才加 -p（标准端口 22 或依赖 SSH config 时均不加）
+  if [[ -n "$RELAY_SSH_PORT" && "$RELAY_SSH_PORT" != "22" ]]; then
     ssh_opts="${ssh_opts} -p ${RELAY_SSH_PORT}"
   fi
   # shellcheck disable=SC2086
-  ssh $ssh_opts "${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}" bash -c "$cmd"
+  ssh $ssh_opts "$RELAY_SSH_TARGET" bash -c "$cmd"
 }
 
 # ── 子命令实现 ────────────────────────────────────────────────────────────────
@@ -278,9 +315,9 @@ cmd_config() {
   local v_user v_host v_port v_project v_branch v_corp_remote v_relay_remote v_corp_url
   local v_bare_path v_work_path
 
-  prompt_input "外网服务器用户名 (server_user)"    v_user         "$cur_user"
-  prompt_input "外网服务器地址 (server_host)"      v_host         "$cur_host"
-  prompt_input "SSH 端口 (ssh_port)"              v_port         "$cur_port"
+  prompt_input          "外网服务器地址/别名 (server_host)"              v_host "$cur_host"
+  prompt_input_optional "外网服务器用户名 (server_user，SSH config 中有则留空)" v_user "$cur_user"
+  prompt_input_optional "SSH 端口 (ssh_port，SSH config 中有则留空)"          v_port "$cur_port"
   prompt_input "项目名 (project_name)"             v_project      "$cur_project"
   prompt_input "默认分支 (default_branch)"         v_branch       "$cur_branch"
   prompt_input "公司仓库 remote 名 (corp_remote)"  v_corp_remote  "$cur_corp_remote"
@@ -339,17 +376,23 @@ cmd_config() {
     prompt_input "公司仓库 URL (corp_url)" v_corp_url "$cur_corp_url"
   fi
 
-  conf_set server_user    "$v_user"
   conf_set server_host    "$v_host"
-  conf_set ssh_port       "$v_port"
   conf_set project_name   "$v_project"
   conf_set default_branch "$v_branch"
   conf_set corp_remote    "$v_corp_remote"
   conf_set relay_remote   "$v_relay_remote"
+  # server_user / ssh_port 为可选项：有值则写入，已有旧值但用户清空则也写入（覆盖为空）
+  if [[ -n "$v_user" ]] || grep -q "^server_user=" "$CONF_FILE" 2>/dev/null; then
+    conf_set server_user "$v_user"
+  fi
+  if [[ -n "$v_port" ]] || grep -q "^ssh_port=" "$CONF_FILE" 2>/dev/null; then
+    conf_set ssh_port "$v_port"
+  fi
   if [[ -n "$v_corp_url" ]]; then
     conf_set corp_url "$v_corp_url"
   fi
   # 路径只在与默认值不同时写入（保持配置文件简洁）
+  # server_user 可能为空，路径默认值用运行时解析的值，这里仅做保存判断
   local _save_def_bare="/home/${v_user}/relay/repos/${v_project}.git"
   local _save_def_work="/home/${v_user}/relay/worktrees/${v_project}"
   if [[ "$v_bare_path" != "$_save_def_bare" ]]; then
