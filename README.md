@@ -463,14 +463,20 @@ git-relay config
 
 交互式填写以下参数：
 
-| 参数 | 说明 | 示例 |
+| 参数 | 说明 | 默认值 / 示例 |
 |---|---|---|
 | `server_user` | 外网服务器用户名 | `gitrelay` |
 | `server_host` | 外网服务器地址 | `1.2.3.4` |
-| `ssh_port` | SSH 端口（默认 22） | `22` |
+| `ssh_port` | SSH 端口 | `22` |
 | `project_name` | 项目名（默认预填目录名） | `my-app` |
 | `default_branch` | 默认分支 | `main` |
-| `corp_url` | 公司 Git 仓库地址 | `git@corp.example.com:team/my-app.git` |
+| `corp_remote` | 公司仓库 remote 名 | `corp` |
+| `relay_remote` | 中转仓库 remote 名 | `relay` |
+| `corp_url` | 公司仓库 URL（可选择已有 remote 代替手动输入） | `git@corp.example.com:team/my-app.git` |
+
+**`corp_url` 的两种填写方式**：
+- 选择已有 remote — 列出当前仓库所有 remote，选一个即可，URL 自动读取
+- 手动输入 — 若 `corp_remote` 对应的 remote 已存在且 URL 一致，也可不单独存储 `corp_url`
 
 ### 第二步：一次性初始化
 
@@ -601,7 +607,9 @@ server_host=1.2.3.4
 ssh_port=22
 project_name=my-app
 default_branch=main
-corp_url=git@corp.example.com:team/my-app.git
+corp_remote=corp          # 可自定义，默认 corp
+relay_remote=relay        # 可自定义，默认 relay
+corp_url=git@corp.example.com:team/my-app.git  # 可省略（若 corp_remote 已存在）
 ```
 
 权限自动设为 `600`。
