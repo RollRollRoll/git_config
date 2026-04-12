@@ -451,14 +451,24 @@ git config --global --unset alias.profile  # 删除 git 别名
 git-relay config
 ```
 
-交互式填写以下参数，保存到 `~/.git-relay.conf`：
+在 git 仓库内运行时，会先询问保存位置：
+
+```
+保存位置：
+  1) 项目级  /path/to/project/.git-relay.conf
+  2) 全局    ~/.git-relay.conf
+```
+
+选择项目级时，会自动提示将 `.git-relay.conf` 加入 `.gitignore`，防止服务器信息提交进仓库。
+
+交互式填写以下参数：
 
 | 参数 | 说明 | 示例 |
 |---|---|---|
 | `server_user` | 外网服务器用户名 | `gitrelay` |
 | `server_host` | 外网服务器地址 | `1.2.3.4` |
 | `ssh_port` | SSH 端口（默认 22） | `22` |
-| `project_name` | 项目名 | `my-app` |
+| `project_name` | 项目名（默认预填目录名） | `my-app` |
 | `default_branch` | 默认分支 | `main` |
 | `corp_url` | 公司 Git 仓库地址 | `git@corp.example.com:team/my-app.git` |
 
@@ -575,7 +585,15 @@ git-relay feature-clean my-feature
 
 ## 配置文件
 
-配置保存在 `~/.git-relay.conf`（权限自动设为 `600`）：
+### 优先级
+
+配置文件按以下优先级依次查找（高优先级覆盖低优先级）：
+
+1. **环境变量** `CONF_FILE=<路径>`（显式指定）
+2. **项目级** `<仓库根目录>/.git-relay.conf`（自动检测）
+3. **全局** `~/.git-relay.conf`（默认回退）
+
+### 格式
 
 ```ini
 server_user=gitrelay
@@ -586,11 +604,26 @@ default_branch=main
 corp_url=git@corp.example.com:team/my-app.git
 ```
 
-管理多个项目时可通过环境变量隔离：
+权限自动设为 `600`。
+
+### 多项目管理
+
+**推荐方式：每个项目在仓库内运行 `git-relay config` 选择「项目级」**，脚本自动读取当前仓库的配置，无需额外操作。
+
+也可通过环境变量临时切换：
 
 ```bash
-CONF_FILE=~/.git-relay-project2.conf git-relay config
-CONF_FILE=~/.git-relay-project2.conf git-relay push-to-relay
+CONF_FILE=~/.git-relay-other.conf git-relay push-to-relay
+```
+
+### config-show 来源标注
+
+```bash
+git-relay config-show
+# 输出示例：
+# ── 当前配置 [项目级] /path/to/project/.git-relay.conf ──
+# ── 当前配置 [全局] ~/.git-relay.conf ──
+# ── 当前配置 [环境变量指定] /custom/path.conf ──
 ```
 
 ## 扩展文档
