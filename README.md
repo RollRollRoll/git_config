@@ -1,3 +1,12 @@
+# git-profile & git-relay
+
+本仓库提供两个互补的 Git 工具：
+
+- **`git-profile`** — 在一台电脑上管理多个 Git 身份（SSH 密钥 + 用户名/邮箱）
+- **`git-relay`** — 当外网服务器无法直接访问公司 Git 仓库时，管理多远程中转同步链路
+
+---
+
 # git-profile
 
 在一台电脑上管理多个 Git 身份（SSH 密钥 + 用户名/邮箱），支持多 Git 平台和同平台多账号场景。
@@ -76,7 +85,7 @@ cd git_config
 ```
 
 安装脚本会：
-1. 复制 `git-profile` 到 `~/.local/bin/`
+1. 复制 `git-profile` 和 `git-relay` 到 `~/.local/bin/`
 2. 初始化 `~/.git-profiles.conf`
 3. 创建 `~/.gitconfig.d/` 目录
 4. 设置 `git profile` 别名（可用 `git profile` 代替 `git-profile`）
@@ -87,10 +96,6 @@ cd git_config
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
-
-## 扩展文档
-
-- [Git 多远程中转同步操作手册](docs/guides/2026-04-07-git-multi-remote-relay-sync.md)
 
 ## 使用指南
 
@@ -421,3 +426,174 @@ rm -rf ~/.gitconfig.d/                # 删除 gitconfig 片段
 git config --global --unset alias.profile  # 删除 git 别名
 # SSH 密钥和 ~/.ssh/config 中的别名条目需手动检查删除
 ```
+
+---
+
+# git-relay
+
+在"外网服务器不能直接访问公司 Git 服务器"的场景下，`git-relay` 将手册中的每个操作序列封装为单条命令，实现以下链路的一键管理：
+
+```
+公司仓库 (corp)  ↔  本地工作仓库  ↔  外网裸仓库 (relay)  ↔  外网服务器工作区
+```
+
+**核心约束**：
+
+- 本地是唯一能同时连接 `corp` 和 `relay` 的节点
+- 外网服务器只与裸仓库通信，不配置 `corp` remote
+- 所有回流公司仓库的操作只能在本地执行
+
+## 快速开始
+
+### 第一步：填写配置
+
+```bash
+git-relay config
+```
+
+交互式填写以下参数，保存到 `~/.git-relay.conf`：
+
+| 参数 | 说明 | 示例 |
+|---|---|---|
+| `server_user` | 外网服务器用户名 | `gitrelay` |
+| `server_host` | 外网服务器地址 | `1.2.3.4` |
+| `ssh_port` | SSH 端口（默认 22） | `22` |
+| `project_name` | 项目名 | `my-app` |
+| `default_branch` | 默认分支 | `main` |
+| `corp_url` | 公司 Git 仓库地址 | `git@corp.example.com:team/my-app.git` |
+
+### 第二步：一次性初始化
+
+在项目目录下执行：
+
+```bash
+cd ~/Project/my-app
+git-relay init
+```
+
+该命令依次完成：
+
+1. SSH 到外网服务器，创建裸仓库和目录结构
+2. 本地配置 `corp` / `relay` 两个 remote
+3. 将主分支首次推送到外网裸仓库
+4. 在外网服务器 clone 工作区
+
+完成后服务器目录结构如下：
+
+```
+/home/<server_user>/relay/
+├── repos/
+│   └── my-app.git          # 裸仓库（中转节点）
+└── worktrees/
+    └── my-app              # 工作区（开发节点）
+```
+
+## 日常工作流
+
+### 开始远程开发前：同步公司最新代码到服务器
+
+```bash
+git-relay sync-corp-to-relay
+```
+
+等价于：本地从 corp 拉取 → 推送到 relay → SSH 让服务器自动 pull。
+
+### 在外网服务器上开发功能分支
+
+```bash
+# 1. 在服务器创建功能分支（SSH 自动执行）
+git-relay feature-start my-feature
+
+# 2. 登录服务器进行开发
+ssh <server_user>@<server_host>
+cd ~/relay/worktrees/my-app
+# ... 编辑、git add、git commit ...
+
+# 3. 开发完毕，服务器推回裸仓库（SSH 自动执行）
+git-relay feature-push
+```
+
+### 将服务器功能分支同步回公司仓库
+
+**逐步执行：**
+
+```bash
+git-relay feature-pull my-feature   # 本地从 relay 拉取功能分支
+git-relay feature-merge my-feature  # 合并并推回公司仓库
+```
+
+**或一键完成（服务器推送 + 本地拉取 + 合并 + 推公司）：**
+
+```bash
+git-relay sync-server-to-corp my-feature
+```
+
+### 清理已合并的功能分支
+
+```bash
+git-relay feature-clean my-feature
+```
+
+一次性删除本地分支、relay remote 分支、服务器本地分支。
+
+## 命令参考
+
+### 配置类
+
+| 命令 | 功能 |
+|---|---|
+| `git-relay config` | 交互式配置（首次必须先执行） |
+| `git-relay config-show` | 查看当前配置 |
+
+### 初始化类（只需执行一次）
+
+| 命令 | 功能 |
+|---|---|
+| `git-relay init` | 完整初始化（推荐） |
+| `git-relay init-server` | 仅初始化外网服务器裸仓库 |
+| `git-relay init-local` | 仅配置本地 remote 并首推 |
+
+### 日常同步类
+
+| 命令 | 功能 |
+|---|---|
+| `git-relay push-to-relay` | 本地 → 推送主分支到 relay |
+| `git-relay server-pull` | 服务器 → 拉取主分支（SSH 执行） |
+| `git-relay sync-corp-to-relay` | 以上两步合一 |
+
+### 功能分支类
+
+| 命令 | 功能 |
+|---|---|
+| `git-relay feature-start <名称>` | 服务器上创建功能分支 |
+| `git-relay feature-push [名称]` | 服务器推送功能分支到裸仓库 |
+| `git-relay feature-pull <名称>` | 本地从 relay 拉取功能分支 |
+| `git-relay feature-merge <名称>` | 本地合并并推回公司仓库 |
+| `git-relay sync-server-to-corp <名称>` | 以上三步合一 |
+| `git-relay feature-clean <名称>` | 清理功能分支（本地 + relay + 服务器） |
+| `git-relay status` | 显示 remote、分支跟踪、提交图 |
+
+## 配置文件
+
+配置保存在 `~/.git-relay.conf`（权限自动设为 `600`）：
+
+```ini
+server_user=gitrelay
+server_host=1.2.3.4
+ssh_port=22
+project_name=my-app
+default_branch=main
+corp_url=git@corp.example.com:team/my-app.git
+```
+
+管理多个项目时可通过环境变量隔离：
+
+```bash
+CONF_FILE=~/.git-relay-project2.conf git-relay config
+CONF_FILE=~/.git-relay-project2.conf git-relay push-to-relay
+```
+
+## 扩展文档
+
+- [git-relay 完整使用手册](docs/guides/2026-04-12-git-relay-script.md)
+- [Git 多远程中转同步原理手册](docs/guides/2026-04-07-git-multi-remote-relay-sync.md)
