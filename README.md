@@ -473,6 +473,8 @@ git-relay config
 | `corp_remote` | 公司仓库 remote 名 | `corp` |
 | `relay_remote` | 中转仓库 remote 名 | `relay` |
 | `corp_url` | 公司仓库 URL（可选择已有 remote 代替手动输入） | `git@corp.example.com:team/my-app.git` |
+| `server_bare_path` | 服务器裸仓库路径（可选，有默认值） | `/data/repos/my-app.git` |
+| `server_work_path` | 服务器工作区路径（可选，有默认值） | `/data/worktrees/my-app` |
 
 **`corp_url` 的两种填写方式**：
 - 选择已有 remote — 列出当前仓库所有 remote，选一个即可，URL 自动读取
@@ -610,7 +612,17 @@ default_branch=main
 corp_remote=corp          # 可自定义，默认 corp
 relay_remote=relay        # 可自定义，默认 relay
 corp_url=git@corp.example.com:team/my-app.git  # 可省略（若 corp_remote 已存在）
+
+# 服务器路径（可选，不填则使用默认派生路径）
+# server_bare_path=/home/gitrelay/relay/repos/my-app.git
+# server_work_path=/home/gitrelay/relay/worktrees/my-app
 ```
+
+路径默认派生规则：
+- 裸仓库：`/home/<server_user>/relay/repos/<project_name>.git`
+- 工作区：`/home/<server_user>/relay/worktrees/<project_name>`
+
+路径与默认值一致时不会写入配置文件，保持配置简洁。
 
 权限自动设为 `600`。
 

@@ -166,9 +166,11 @@ load_conf() {
   RELAY_CORP_URL="$(conf_get corp_url 2>/dev/null || git remote get-url "$RELAY_CORP_REMOTE" 2>/dev/null || echo '')"
   [[ -n "$RELAY_CORP_URL" ]] || die "无法确定公司仓库 URL，请重新运行: git-relay config"
 
-  # 派生路径
-  RELAY_BARE_PATH="/home/${RELAY_SERVER_USER}/relay/repos/${RELAY_PROJECT}.git"
-  RELAY_WORK_PATH="/home/${RELAY_SERVER_USER}/relay/worktrees/${RELAY_PROJECT}"
+  # 服务器路径：优先读取自定义配置，否则使用默认派生路径
+  local _default_bare="/home/${RELAY_SERVER_USER}/relay/repos/${RELAY_PROJECT}.git"
+  local _default_work="/home/${RELAY_SERVER_USER}/relay/worktrees/${RELAY_PROJECT}"
+  RELAY_BARE_PATH="$(conf_get server_bare_path 2>/dev/null || echo "$_default_bare")"
+  RELAY_WORK_PATH="$(conf_get server_work_path 2>/dev/null || echo "$_default_work")"
 
   # relay remote URL
   if [[ "$RELAY_SSH_PORT" == "22" ]]; then
@@ -274,6 +276,7 @@ cmd_config() {
   cur_corp_url="$(conf_get corp_url 2>/dev/null || echo '')"
 
   local v_user v_host v_port v_project v_branch v_corp_remote v_relay_remote v_corp_url
+  local v_bare_path v_work_path
 
   prompt_input "外网服务器用户名 (server_user)"    v_user         "$cur_user"
   prompt_input "外网服务器地址 (server_host)"      v_host         "$cur_host"
@@ -282,6 +285,17 @@ cmd_config() {
   prompt_input "默认分支 (default_branch)"         v_branch       "$cur_branch"
   prompt_input "公司仓库 remote 名 (corp_remote)"  v_corp_remote  "$cur_corp_remote"
   prompt_input "中转仓库 remote 名 (relay_remote)" v_relay_remote "$cur_relay_remote"
+
+  # 服务器路径：计算默认值供展示，允许用户覆盖
+  local _def_bare="/home/${v_user}/relay/repos/${v_project}.git"
+  local _def_work="/home/${v_user}/relay/worktrees/${v_project}"
+  local cur_bare cur_work
+  cur_bare="$(conf_get server_bare_path 2>/dev/null || echo "$_def_bare")"
+  cur_work="$(conf_get server_work_path 2>/dev/null || echo "$_def_work")"
+  echo
+  info "服务器路径（直接回车使用默认值）："
+  prompt_input "裸仓库路径 (server_bare_path)" v_bare_path "$cur_bare"
+  prompt_input "工作区路径 (server_work_path)" v_work_path "$cur_work"
 
   # ── 公司仓库 URL：选择已有 remote 或手动输入 ────────────────────────────
   local v_corp_url=""
@@ -335,6 +349,15 @@ cmd_config() {
   if [[ -n "$v_corp_url" ]]; then
     conf_set corp_url "$v_corp_url"
   fi
+  # 路径只在与默认值不同时写入（保持配置文件简洁）
+  local _save_def_bare="/home/${v_user}/relay/repos/${v_project}.git"
+  local _save_def_work="/home/${v_user}/relay/worktrees/${v_project}"
+  if [[ "$v_bare_path" != "$_save_def_bare" ]]; then
+    conf_set server_bare_path "$v_bare_path"
+  fi
+  if [[ "$v_work_path" != "$_save_def_work" ]]; then
+    conf_set server_work_path "$v_work_path"
+  fi
 
   # 使后续命令在本次进程内也用新配置
   CONF_FILE="$save_target"
@@ -387,7 +410,8 @@ cmd_init_server() {
       git --git-dir='${RELAY_BARE_PATH}' config receive.denyNonFastForwards true
       git --git-dir='${RELAY_BARE_PATH}' config core.logAllRefUpdates true
       git --git-dir='${RELAY_BARE_PATH}' symbolic-ref HEAD 'refs/heads/${RELAY_BRANCH}'
-      chmod -R 700 '/home/${RELAY_SERVER_USER}/relay'
+      chmod -R 700 '$(dirname "${RELAY_BARE_PATH}")'
+      chmod -R 700 '$(dirname "${RELAY_WORK_PATH}")'
     "
     success "裸仓库创建完成"
   fi
