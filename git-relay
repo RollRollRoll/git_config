@@ -7,8 +7,29 @@ set -euo pipefail
 
 VERSION="0.1.0"
 
-# ── 配置文件路径 ──────────────────────────────────────────────────────────────
-CONF_FILE="${CONF_FILE:-${HOME}/.git-relay.conf}"
+# ── 配置文件路径（优先级：环境变量 > 项目级 > 全局） ─────────────────────────
+GLOBAL_CONF_FILE="${HOME}/.git-relay.conf"
+
+_resolve_conf_file() {
+  # 1. 环境变量显式指定
+  if [[ -n "${CONF_FILE:-}" ]]; then
+    echo "$CONF_FILE"
+    return
+  fi
+  # 2. 当前 git 仓库根目录下的 .git-relay.conf
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
+  if [[ -n "$repo_root" && -f "${repo_root}/.git-relay.conf" ]]; then
+    echo "${repo_root}/.git-relay.conf"
+    return
+  fi
+  # 3. 回退到全局配置
+  echo "$GLOBAL_CONF_FILE"
+}
+
+# 记录是否由环境变量显式指定（供 config-show 标注来源）
+CONF_FILE_ORIG_ENV="${CONF_FILE:-}"
+CONF_FILE="$(_resolve_conf_file)"
 
 # ── 颜色输出 ──────────────────────────────────────────────────────────────────
 _c_reset='\033[0m'
@@ -58,7 +79,12 @@ Git 多远程中转同步工具
   --help      显示帮助
   --version   显示版本
 
-配置文件：${CONF_FILE}
+配置文件优先级：
+  1. 环境变量 CONF_FILE（显式指定）
+  2. 项目根目录 .git-relay.conf（项目级，推荐加入 .gitignore）
+  3. ~/.git-relay.conf（全局默认）
+
+当前生效配置：${CONF_FILE}
 
 工作流示例：
   # 1. 首次初始化
@@ -190,6 +216,41 @@ ssh_run() {
 # config — 交互式配置
 cmd_config() {
   step "配置 git-relay 连接参数"
+
+  # ── 选择保存位置 ──────────────────────────────────────────────────────────
+  local save_target="$CONF_FILE"
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
+
+  if [[ -n "$repo_root" ]]; then
+    local project_conf="${repo_root}/.git-relay.conf"
+    echo "保存位置："
+    echo "  1) 项目级  ${project_conf}"
+    echo "  2) 全局    ${GLOBAL_CONF_FILE}"
+    echo
+    local scope_choice
+    read -r -p "$(echo -e "${_c_cyan}请选择 [1/2]${_c_reset} (默认 1): ")" scope_choice
+    scope_choice="${scope_choice:-1}"
+    if [[ "$scope_choice" == "2" ]]; then
+      save_target="$GLOBAL_CONF_FILE"
+    else
+      save_target="$project_conf"
+      # 提示加入 .gitignore
+      if [[ -f "${repo_root}/.gitignore" ]] && ! grep -qF '.git-relay.conf' "${repo_root}/.gitignore" 2>/dev/null; then
+        warn "建议将 .git-relay.conf 加入 .gitignore 以避免泄露服务器信息"
+        if confirm "自动添加到 .gitignore？"; then
+          echo '.git-relay.conf' >> "${repo_root}/.gitignore"
+          success "已添加到 .gitignore"
+        fi
+      fi
+    fi
+  fi
+
+  # 切换到目标配置文件读取当前值
+  local orig_conf="$CONF_FILE"
+  CONF_FILE="$save_target"
+
+  echo
   echo "请输入以下信息（已有值直接回车保留）："
   echo
 
@@ -198,7 +259,7 @@ cmd_config() {
   cur_user="$(conf_get server_user 2>/dev/null || echo '')"
   cur_host="$(conf_get server_host 2>/dev/null || echo '')"
   cur_port="$(conf_get ssh_port 2>/dev/null || echo '22')"
-  cur_project="$(conf_get project_name 2>/dev/null || echo '')"
+  cur_project="$(conf_get project_name 2>/dev/null || echo "${repo_root:+$(basename "$repo_root")}")"
   cur_branch="$(conf_get default_branch 2>/dev/null || echo 'main')"
   cur_corp="$(conf_get corp_url 2>/dev/null || echo '')"
 
@@ -218,6 +279,9 @@ cmd_config() {
   conf_set default_branch "$v_branch"
   conf_set corp_url       "$v_corp"
 
+  # 使后续命令在本次进程内也用新配置
+  CONF_FILE="$save_target"
+
   success "配置已保存至 ${CONF_FILE}"
   echo
   cmd_config_show
@@ -226,7 +290,18 @@ cmd_config() {
 # config-show — 显示当前配置
 cmd_config_show() {
   [[ -f "$CONF_FILE" ]] || die "未找到配置文件，请先运行: git-relay config"
-  step "当前配置 (${CONF_FILE})"
+
+  # 标注配置来源
+  local source_label
+  if [[ -n "${CONF_FILE_ORIG_ENV:-}" ]]; then
+    source_label="环境变量指定"
+  elif [[ "$CONF_FILE" == "$GLOBAL_CONF_FILE" ]]; then
+    source_label="全局"
+  else
+    source_label="项目级"
+  fi
+
+  step "当前配置 [${source_label}] ${CONF_FILE}"
   cat "$CONF_FILE"
 }
 
