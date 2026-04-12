@@ -3,16 +3,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE="${SCRIPT_DIR}/git-profile"
+SOURCE_PROFILE="${SCRIPT_DIR}/git-profile"
+SOURCE_RELAY="${SCRIPT_DIR}/git-relay"
 
-if [[ ! -f "$SOURCE" ]]; then
+if [[ ! -f "$SOURCE_PROFILE" ]]; then
   echo "Error: git-profile not found in $SCRIPT_DIR" >&2
   exit 1
 fi
 
 DEFAULT_DEST="${HOME}/.local/bin"
 
-echo "=== Git Profile Installer ==="
+echo "=== Git Profile & Relay Installer ==="
 echo ""
 
 DEST="${1:-$DEFAULT_DEST}"
@@ -21,9 +22,15 @@ DEST="${user_dest:-$DEST}"
 
 mkdir -p "$DEST"
 
-cp "$SOURCE" "$DEST/git-profile"
+cp "$SOURCE_PROFILE" "$DEST/git-profile"
 chmod +x "$DEST/git-profile"
 echo "Installed: $DEST/git-profile"
+
+if [[ -f "$SOURCE_RELAY" ]]; then
+  cp "$SOURCE_RELAY" "$DEST/git-relay"
+  chmod +x "$DEST/git-relay"
+  echo "Installed: $DEST/git-relay"
+fi
 
 if [[ ! -f "${HOME}/.git-profiles.conf" ]]; then
   touch "${HOME}/.git-profiles.conf"
@@ -78,4 +85,6 @@ if [[ ":$PATH:" != *":$DEST:"* ]]; then
 fi
 
 echo ""
-echo "Installation complete! Run 'git-profile --help' to get started."
+echo "Installation complete!"
+echo "  Run 'git-profile --help' to manage Git identities."
+echo "  Run 'git-relay --help'   to manage multi-remote relay sync."

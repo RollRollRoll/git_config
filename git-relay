@@ -1,0 +1,713 @@
+#!/usr/bin/env bash
+# git-relay — Git 多远程中转同步工具
+# 适用场景：外网服务器不能直接访问公司 Git 服务器时的代码中转同步
+#
+# 链路：公司仓库(corp) <-> 本地工作仓库 <-> 外网裸仓库(relay) <-> 外网工作区
+set -euo pipefail
+
+VERSION="0.1.0"
+
+# ── 配置文件路径 ──────────────────────────────────────────────────────────────
+CONF_FILE="${CONF_FILE:-${HOME}/.git-relay.conf}"
+
+# ── 颜色输出 ──────────────────────────────────────────────────────────────────
+_c_reset='\033[0m'
+_c_bold='\033[1m'
+_c_red='\033[0;31m'
+_c_green='\033[0;32m'
+_c_yellow='\033[0;33m'
+_c_cyan='\033[0;36m'
+
+info()    { echo -e "${_c_cyan}▶${_c_reset} $*"; }
+success() { echo -e "${_c_green}✔${_c_reset} $*"; }
+warn()    { echo -e "${_c_yellow}⚠${_c_reset} $*"; }
+error()   { echo -e "${_c_red}✖${_c_reset} $*" >&2; }
+step()    { echo -e "${_c_bold}── $* ──${_c_reset}"; }
+die()     { error "$*"; exit 1; }
+
+# ── 帮助文本 ──────────────────────────────────────────────────────────────────
+show_help() {
+  cat <<EOF
+Usage: git-relay <子命令> [选项]
+
+Git 多远程中转同步工具
+链路：公司仓库(corp) ↔ 本地 ↔ 外网裸仓库(relay) ↔ 外网工作区
+
+子命令：
+  config               配置中转连接参数（交互式，首次运行必须先执行）
+  config-show          显示当前配置
+  init                 一次性初始化（在外网服务器建裸仓库 + 本地添加 relay remote）
+  init-server          仅在外网服务器上创建裸仓库和工作区
+  init-local           仅在本地配置 relay remote 并首次推送
+
+  push-to-relay        本地 → 将公司最新代码推送到外网裸仓库（日常同步入口）
+  server-pull          外网服务器 → 从裸仓库拉取最新代码（ssh 远程执行）
+
+  feature-start <名称>  外网服务器上创建功能分支（ssh 远程执行）
+  feature-push          外网服务器将功能分支推回裸仓库（ssh 远程执行）
+  feature-pull <名称>   本地从 relay 拉取功能分支（首次或更新）
+  feature-merge <名称>  本地合并功能分支并推回公司仓库
+  feature-clean <名称>  清理本地 + relay + 外网服务器的功能分支
+
+  sync-corp-to-relay   = push-to-relay + server-pull（一步完成同步到服务器）
+  sync-server-to-corp  = feature-push(server) + feature-pull + feature-merge（服务器提交同步回公司）
+
+  status               显示本地远程状态和分支跟踪关系
+
+选项：
+  --help      显示帮助
+  --version   显示版本
+
+配置文件：${CONF_FILE}
+
+工作流示例：
+  # 1. 首次初始化
+  git-relay config
+  git-relay init
+
+  # 2. 每次开始远程开发前（同步公司最新到服务器）
+  git-relay sync-corp-to-relay
+
+  # 3. 服务器上创建功能分支开发
+  git-relay feature-start my-feature
+
+  # 4. 开发完毕后，服务器推回裸仓库
+  git-relay feature-push
+
+  # 5. 本地拉回并合并推回公司
+  git-relay feature-pull my-feature
+  git-relay feature-merge my-feature
+
+  # 6. 清理
+  git-relay feature-clean my-feature
+EOF
+}
+
+# ── 配置文件读写 ──────────────────────────────────────────────────────────────
+
+# 读取配置项：conf_get <key>
+conf_get() {
+  local key="$1"
+  [[ -f "$CONF_FILE" ]] || return 1
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    if [[ "$line" == "${key}="* ]]; then
+      echo "${line#*=}"
+      return 0
+    fi
+  done < "$CONF_FILE"
+  return 1
+}
+
+# 写入/更新配置项：conf_set <key> <value>
+conf_set() {
+  local key="$1" value="$2"
+  if [[ -f "$CONF_FILE" ]] && grep -q "^${key}=" "$CONF_FILE" 2>/dev/null; then
+    # 更新已有项
+    local tmp
+    tmp="$(mktemp)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "${key}="* ]]; then
+        echo "${key}=${value}"
+      else
+        echo "$line"
+      fi
+    done < "$CONF_FILE" > "$tmp"
+    mv "$tmp" "$CONF_FILE"
+  else
+    echo "${key}=${value}" >> "$CONF_FILE"
+  fi
+  chmod 600 "$CONF_FILE"
+}
+
+# 加载配置并导出到变量，找不到则 die
+load_conf() {
+  [[ -f "$CONF_FILE" ]] || die "未找到配置文件 ${CONF_FILE}，请先运行: git-relay config"
+
+  RELAY_SERVER_USER="$(conf_get server_user 2>/dev/null)" || die "配置缺少 server_user，请重新运行: git-relay config"
+  RELAY_SERVER_HOST="$(conf_get server_host 2>/dev/null)" || die "配置缺少 server_host，请重新运行: git-relay config"
+  RELAY_PROJECT="$(conf_get project_name 2>/dev/null)"    || die "配置缺少 project_name，请重新运行: git-relay config"
+  RELAY_BRANCH="$(conf_get default_branch 2>/dev/null)"   || die "配置缺少 default_branch，请重新运行: git-relay config"
+  RELAY_CORP_URL="$(conf_get corp_url 2>/dev/null)"       || die "配置缺少 corp_url，请重新运行: git-relay config"
+  RELAY_SSH_PORT="$(conf_get ssh_port 2>/dev/null || echo 22)"
+
+  # 派生路径
+  RELAY_BARE_PATH="/home/${RELAY_SERVER_USER}/relay/repos/${RELAY_PROJECT}.git"
+  RELAY_WORK_PATH="/home/${RELAY_SERVER_USER}/relay/worktrees/${RELAY_PROJECT}"
+
+  # relay remote URL
+  if [[ "$RELAY_SSH_PORT" == "22" ]]; then
+    RELAY_REMOTE_URL="${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}:${RELAY_BARE_PATH}"
+  else
+    RELAY_REMOTE_URL="ssh://${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}:${RELAY_SSH_PORT}${RELAY_BARE_PATH}"
+  fi
+}
+
+# ── 输入工具 ──────────────────────────────────────────────────────────────────
+
+# prompt_input <提示> <默认值变量名>
+prompt_input() {
+  local prompt="$1" var_name="$2" default="${3:-}"
+  local input
+  if [[ -n "$default" ]]; then
+    read -r -p "$(echo -e "${_c_cyan}${prompt}${_c_reset} [${default}]: ")" input
+    input="${input:-$default}"
+  else
+    read -r -p "$(echo -e "${_c_cyan}${prompt}${_c_reset}: ")" input
+    while [[ -z "$input" ]]; do
+      warn "不能为空，请重新输入"
+      read -r -p "$(echo -e "${_c_cyan}${prompt}${_c_reset}: ")" input
+    done
+  fi
+  printf -v "$var_name" '%s' "$input"
+}
+
+# 确认提示：confirm <提示>，返回 0=确认 1=取消
+confirm() {
+  local prompt="$1"
+  local ans
+  read -r -p "$(echo -e "${_c_yellow}${prompt} [y/N]${_c_reset}: ")" ans
+  [[ "$ans" =~ ^[Yy]$ ]]
+}
+
+# ── SSH 远程执行 ──────────────────────────────────────────────────────────────
+
+# ssh_run <命令>  — 在外网服务器上执行命令
+ssh_run() {
+  local cmd="$1"
+  local ssh_opts="-o StrictHostKeyChecking=accept-new"
+  if [[ "${RELAY_SSH_PORT}" != "22" ]]; then
+    ssh_opts="${ssh_opts} -p ${RELAY_SSH_PORT}"
+  fi
+  # shellcheck disable=SC2086
+  ssh $ssh_opts "${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}" bash -c "$cmd"
+}
+
+# ── 子命令实现 ────────────────────────────────────────────────────────────────
+
+# config — 交互式配置
+cmd_config() {
+  step "配置 git-relay 连接参数"
+  echo "请输入以下信息（已有值直接回车保留）："
+  echo
+
+  local cur_user cur_host cur_port cur_project cur_branch cur_corp
+
+  cur_user="$(conf_get server_user 2>/dev/null || echo '')"
+  cur_host="$(conf_get server_host 2>/dev/null || echo '')"
+  cur_port="$(conf_get ssh_port 2>/dev/null || echo '22')"
+  cur_project="$(conf_get project_name 2>/dev/null || echo '')"
+  cur_branch="$(conf_get default_branch 2>/dev/null || echo 'main')"
+  cur_corp="$(conf_get corp_url 2>/dev/null || echo '')"
+
+  local v_user v_host v_port v_project v_branch v_corp
+
+  prompt_input "外网服务器用户名 (server_user)"    v_user    "$cur_user"
+  prompt_input "外网服务器地址 (server_host)"      v_host    "$cur_host"
+  prompt_input "SSH 端口 (ssh_port)"              v_port    "$cur_port"
+  prompt_input "项目名 (project_name)"             v_project "$cur_project"
+  prompt_input "默认分支 (default_branch)"         v_branch  "$cur_branch"
+  prompt_input "公司仓库 URL (corp_url)"           v_corp    "$cur_corp"
+
+  conf_set server_user    "$v_user"
+  conf_set server_host    "$v_host"
+  conf_set ssh_port       "$v_port"
+  conf_set project_name   "$v_project"
+  conf_set default_branch "$v_branch"
+  conf_set corp_url       "$v_corp"
+
+  success "配置已保存至 ${CONF_FILE}"
+  echo
+  cmd_config_show
+}
+
+# config-show — 显示当前配置
+cmd_config_show() {
+  [[ -f "$CONF_FILE" ]] || die "未找到配置文件，请先运行: git-relay config"
+  step "当前配置 (${CONF_FILE})"
+  cat "$CONF_FILE"
+}
+
+# init-server — 在外网服务器上创建裸仓库和工作区
+cmd_init_server() {
+  load_conf
+  step "在外网服务器上初始化裸仓库"
+  info "服务器: ${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}"
+  info "裸仓库: ${RELAY_BARE_PATH}"
+  info "工作区: ${RELAY_WORK_PATH}"
+  echo
+
+  # 检查是否已经存在
+  local exists
+  exists="$(ssh_run "[ -d '${RELAY_BARE_PATH}' ] && echo yes || echo no")"
+  if [[ "$exists" == "yes" ]]; then
+    warn "裸仓库已存在：${RELAY_BARE_PATH}"
+    confirm "是否跳过创建，直接继续？" || die "已取消"
+  else
+    info "创建目录并初始化裸仓库..."
+    ssh_run "
+      set -e
+      mkdir -p '$(dirname "${RELAY_BARE_PATH}")'
+      mkdir -p '$(dirname "${RELAY_WORK_PATH}")'
+      git init --bare '${RELAY_BARE_PATH}'
+      git --git-dir='${RELAY_BARE_PATH}' config receive.denyNonFastForwards true
+      git --git-dir='${RELAY_BARE_PATH}' config core.logAllRefUpdates true
+      git --git-dir='${RELAY_BARE_PATH}' symbolic-ref HEAD 'refs/heads/${RELAY_BRANCH}'
+      chmod -R 700 '/home/${RELAY_SERVER_USER}/relay'
+    "
+    success "裸仓库创建完成"
+  fi
+
+  # 检查工作区是否存在
+  local wt_exists
+  wt_exists="$(ssh_run "[ -d '${RELAY_WORK_PATH}/.git' ] && echo yes || echo no")"
+  if [[ "$wt_exists" == "yes" ]]; then
+    warn "工作区已存在：${RELAY_WORK_PATH}"
+  else
+    info "注意：工作区将在首次推送代码后自动 clone，请先运行 init-local 推送代码。"
+  fi
+}
+
+# init-local — 本地添加 relay remote 并首次推送
+cmd_init_local() {
+  load_conf
+  step "本地初始化：配置 relay remote 并首次推送"
+
+  # 确保在 git 仓库中
+  git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库，请先 cd 到项目目录"
+
+  # 检查 corp remote
+  if git remote | grep -q "^corp$"; then
+    info "corp remote 已存在：$(git remote get-url corp)"
+  else
+    # 检查是否有 origin，若有则建议改名
+    if git remote | grep -q "^origin$"; then
+      local origin_url
+      origin_url="$(git remote get-url origin)"
+      warn "检测到 origin remote: ${origin_url}"
+      if confirm "是否将 origin 重命名为 corp？"; then
+        git remote rename origin corp
+        success "已将 origin 重命名为 corp"
+      else
+        # 直接添加 corp
+        git remote add corp "$RELAY_CORP_URL"
+        success "已添加 corp remote: ${RELAY_CORP_URL}"
+      fi
+    else
+      git remote add corp "$RELAY_CORP_URL"
+      success "已添加 corp remote: ${RELAY_CORP_URL}"
+    fi
+  fi
+
+  # 检查 relay remote
+  if git remote | grep -q "^relay$"; then
+    local existing_relay
+    existing_relay="$(git remote get-url relay)"
+    if [[ "$existing_relay" != "$RELAY_REMOTE_URL" ]]; then
+      warn "relay remote URL 与配置不一致"
+      warn "  当前: ${existing_relay}"
+      warn "  配置: ${RELAY_REMOTE_URL}"
+      if confirm "是否更新 relay remote URL？"; then
+        git remote set-url relay "$RELAY_REMOTE_URL"
+        success "relay remote URL 已更新"
+      fi
+    else
+      info "relay remote 已存在且 URL 一致：${RELAY_REMOTE_URL}"
+    fi
+  else
+    git remote add relay "$RELAY_REMOTE_URL"
+    success "已添加 relay remote: ${RELAY_REMOTE_URL}"
+  fi
+
+  echo
+  info "当前 remote 列表："
+  git remote -v
+
+  # 首次推送
+  echo
+  if confirm "是否立即将主分支首次推送到 relay？"; then
+    info "正在从 corp 拉取最新代码..."
+    git fetch corp --prune
+    git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+    git pull --ff-only corp "$RELAY_BRANCH"
+    info "推送主分支到 relay..."
+    git push -u relay "$RELAY_BRANCH"
+    git push relay --tags
+    success "首次推送完成"
+
+    # 在服务器上 clone 工作区
+    echo
+    if confirm "是否在外网服务器上 clone 工作区？"; then
+      _server_clone_worktree
+    fi
+  fi
+}
+
+# 内部：服务器 clone 工作区
+_server_clone_worktree() {
+  local wt_exists
+  wt_exists="$(ssh_run "[ -d '${RELAY_WORK_PATH}/.git' ] && echo yes || echo no")"
+  if [[ "$wt_exists" == "yes" ]]; then
+    warn "服务器工作区已存在：${RELAY_WORK_PATH}"
+  else
+    info "在服务器上 clone 工作区..."
+    ssh_run "
+      set -e
+      git clone '${RELAY_BARE_PATH}' '${RELAY_WORK_PATH}'
+    "
+    success "服务器工作区 clone 完成：${RELAY_WORK_PATH}"
+  fi
+
+  info "服务器工作区 remote 列表："
+  ssh_run "cd '${RELAY_WORK_PATH}' && git remote -v"
+}
+
+# init — 完整一次性初始化（服务器 + 本地）
+cmd_init() {
+  load_conf
+  step "完整一次性初始化"
+  echo "本命令将依次执行："
+  echo "  1. 在外网服务器创建裸仓库"
+  echo "  2. 本地配置 corp / relay remote"
+  echo "  3. 首次将代码推送到 relay"
+  echo "  4. 在外网服务器 clone 工作区"
+  echo
+  confirm "确认继续？" || die "已取消"
+  echo
+
+  cmd_init_server
+  echo
+  cmd_init_local
+}
+
+# push-to-relay — 本地将公司最新代码推送到 relay
+cmd_push_to_relay() {
+  load_conf
+  step "本地 → 同步公司代码到外网裸仓库"
+
+  git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
+
+  info "从 corp 拉取最新代码..."
+  git fetch corp --prune
+
+  info "切换到主分支 ${RELAY_BRANCH}..."
+  git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+
+  info "fast-forward 合并 corp/${RELAY_BRANCH}..."
+  git pull --ff-only corp "$RELAY_BRANCH"
+
+  info "推送到 relay..."
+  git push relay "$RELAY_BRANCH"
+  git push relay --tags
+
+  success "公司代码已同步到外网裸仓库"
+  echo
+  info "本地提交概览（最近 5 条）："
+  git log --oneline -5
+}
+
+# server-pull — ssh 远程让服务器拉取最新主分支
+cmd_server_pull() {
+  load_conf
+  step "外网服务器 → 从裸仓库拉取最新主分支"
+
+  info "服务器工作区: ${RELAY_WORK_PATH}"
+  ssh_run "
+    set -e
+    cd '${RELAY_WORK_PATH}'
+    git switch '${RELAY_BRANCH}' 2>/dev/null || git checkout '${RELAY_BRANCH}'
+    git pull --ff-only origin '${RELAY_BRANCH}'
+    echo '=== 最近 5 条提交 ==='
+    git log --oneline -5
+  "
+  success "服务器工作区已更新到最新主分支"
+}
+
+# sync-corp-to-relay — push-to-relay + server-pull 一步完成
+cmd_sync_corp_to_relay() {
+  load_conf
+  step "全链路同步：公司仓库 → 本地 → relay → 服务器工作区"
+  cmd_push_to_relay
+  echo
+  cmd_server_pull
+  echo
+  success "同步完成！服务器工作区已是最新代码，可以开始开发。"
+}
+
+# feature-start <名称> — 在外网服务器创建功能分支
+cmd_feature_start() {
+  local feature_name="${1:-}"
+  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+
+  load_conf
+  step "外网服务器 → 创建功能分支: feature/${feature_name}"
+
+  ssh_run "
+    set -e
+    cd '${RELAY_WORK_PATH}'
+    git switch '${RELAY_BRANCH}' 2>/dev/null || git checkout '${RELAY_BRANCH}'
+    git pull --ff-only origin '${RELAY_BRANCH}'
+    git switch -c 'feature/${feature_name}'
+    echo '已创建并切换到分支: feature/${feature_name}'
+    git branch -vv
+  "
+  success "功能分支 feature/${feature_name} 已在服务器创建"
+  info "可以登录服务器开始开发，完成后运行: git-relay feature-push"
+}
+
+# feature-push [名称] — 外网服务器将当前功能分支推回裸仓库
+cmd_feature_push() {
+  local feature_name="${1:-}"
+  load_conf
+  step "外网服务器 → 推送功能分支到裸仓库"
+
+  if [[ -n "$feature_name" ]]; then
+    # 推指定分支
+    ssh_run "
+      set -e
+      cd '${RELAY_WORK_PATH}'
+      git push -u origin 'feature/${feature_name}'
+      echo '=== 最近 5 条提交 ==='
+      git log --oneline -5
+    "
+    success "功能分支 feature/${feature_name} 已推送到裸仓库"
+  else
+    # 推当前分支
+    info "将推送服务器当前所在分支..."
+    ssh_run "
+      set -e
+      cd '${RELAY_WORK_PATH}'
+      current=\$(git rev-parse --abbrev-ref HEAD)
+      echo \"当前分支: \${current}\"
+      if [ \"\$current\" = '${RELAY_BRANCH}' ]; then
+        echo '警告：当前在主分支，建议在功能分支上开发！'
+        exit 1
+      fi
+      git push -u origin HEAD
+      echo '=== 最近 5 条提交 ==='
+      git log --oneline -5
+    "
+    success "服务器当前分支已推送到裸仓库"
+  fi
+}
+
+# feature-pull <名称> — 本地从 relay 拉取功能分支
+cmd_feature_pull() {
+  local feature_name="${1:-}"
+  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+
+  load_conf
+  step "本地 → 从 relay 拉取功能分支: feature/${feature_name}"
+
+  git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
+
+  info "从 relay 获取最新分支信息..."
+  git fetch relay --prune
+
+  local branch="feature/${feature_name}"
+
+  # 检查 relay 上是否有该分支
+  if ! git branch -r | grep -q "relay/${branch}"; then
+    die "relay 上不存在分支 ${branch}，请确认服务器已推送该分支"
+  fi
+
+  # 本地是否已有该分支
+  if git branch --list "$branch" | grep -q "$branch"; then
+    info "本地已有分支 ${branch}，执行更新..."
+    git switch "$branch"
+    git pull --ff-only relay "$branch"
+    success "已更新本地 ${branch}"
+  else
+    info "首次拉取，创建本地跟踪分支..."
+    git switch -c "$branch" --track "relay/${branch}"
+    success "已创建并跟踪 relay/${branch}"
+  fi
+
+  echo
+  info "当前分支状态："
+  git log --oneline -5
+}
+
+# feature-merge <名称> — 本地合并功能分支并推回公司仓库
+cmd_feature_merge() {
+  local feature_name="${1:-}"
+  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+
+  load_conf
+  step "本地 → 合并 feature/${feature_name} 并推回公司仓库"
+
+  git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
+
+  local branch="feature/${feature_name}"
+
+  # 确保本地有该分支
+  if ! git branch --list "$branch" | grep -q "$branch"; then
+    die "本地不存在分支 ${branch}，请先运行: git-relay feature-pull ${feature_name}"
+  fi
+
+  info "更新本地主分支..."
+  git fetch corp --prune
+  git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+  git pull --ff-only corp "$RELAY_BRANCH"
+
+  info "合并 ${branch}（--no-ff）..."
+  git merge --no-ff "$branch"
+
+  echo
+  info "合并后提交记录（最近 8 条）："
+  git log --oneline --graph -8
+  echo
+
+  confirm "确认推送到公司仓库 corp/${RELAY_BRANCH}？" || die "已取消，保留合并结果，可手动推送"
+
+  git push corp "$RELAY_BRANCH"
+  success "已推送到公司仓库"
+
+  info "同步回 relay..."
+  git push relay "$RELAY_BRANCH"
+  success "relay 主分支已同步"
+
+  # 更新服务器工作区主分支
+  if confirm "是否同时更新外网服务器工作区主分支？"; then
+    cmd_server_pull
+  fi
+}
+
+# sync-server-to-corp [名称] — 服务器提交一键同步回公司仓库
+cmd_sync_server_to_corp() {
+  local feature_name="${1:-}"
+  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+
+  load_conf
+  step "全链路同步：服务器功能分支 → relay → 本地 → 公司仓库"
+  echo "本命令将依次执行："
+  echo "  1. 服务器推送 feature/${feature_name} 到裸仓库"
+  echo "  2. 本地从 relay 拉取该分支"
+  echo "  3. 本地合并并推回公司仓库"
+  echo
+  confirm "确认继续？" || die "已取消"
+
+  cmd_feature_push "$feature_name"
+  echo
+  cmd_feature_pull "$feature_name"
+  echo
+  cmd_feature_merge "$feature_name"
+}
+
+# feature-clean <名称> — 清理功能分支（本地 + relay + 服务器）
+cmd_feature_clean() {
+  local feature_name="${1:-}"
+  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+
+  load_conf
+  step "清理功能分支: feature/${feature_name}"
+  echo "将删除："
+  echo "  - 本地分支:          feature/${feature_name}"
+  echo "  - relay remote 分支: relay/feature/${feature_name}"
+  echo "  - 服务器本地分支:    feature/${feature_name}（切回主分支）"
+  echo
+
+  confirm "确认清理？" || die "已取消"
+
+  local branch="feature/${feature_name}"
+
+  # 本地删除
+  if git branch --list "$branch" | grep -q "$branch"; then
+    local current_branch
+    current_branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [[ "$current_branch" == "$branch" ]]; then
+      git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+    fi
+    git branch -d "$branch" && success "已删除本地分支 ${branch}" || warn "本地分支删除失败（可能有未合并提交）"
+  else
+    info "本地无分支 ${branch}，跳过"
+  fi
+
+  # 删除 relay 远程分支
+  if git fetch relay --prune 2>/dev/null; then
+    if git branch -r | grep -q "relay/${branch}"; then
+      git push relay --delete "$branch" && success "已删除 relay/${branch}" || warn "relay 分支删除失败"
+    else
+      info "relay 上无分支 ${branch}，跳过"
+    fi
+  fi
+
+  # 服务器清理
+  info "清理服务器上的分支..."
+  ssh_run "
+    set -e
+    cd '${RELAY_WORK_PATH}'
+    git fetch --prune
+    current=\$(git rev-parse --abbrev-ref HEAD)
+    if [ \"\$current\" = '${branch}' ]; then
+      git switch '${RELAY_BRANCH}' 2>/dev/null || git checkout '${RELAY_BRANCH}'
+    fi
+    if git branch --list '${branch}' | grep -q '${branch}'; then
+      git branch -d '${branch}' && echo '服务器本地分支已删除' || echo '警告：服务器分支删除失败'
+    else
+      echo '服务器无该分支，跳过'
+    fi
+    git fetch --prune
+  " || warn "服务器清理时出现错误，请手动检查"
+
+  success "清理完成"
+}
+
+# status — 显示当前状态
+cmd_status() {
+  load_conf || true
+  step "当前仓库状态"
+
+  git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
+
+  echo
+  info "=== Remote 列表 ==="
+  git remote -v
+
+  echo
+  info "=== 本地分支跟踪关系 ==="
+  git branch -vv
+
+  echo
+  info "=== 提交历史（最近 10 条，所有分支）==="
+  git log --oneline --graph --decorate --all -10
+}
+
+# ── 入口 ──────────────────────────────────────────────────────────────────────
+main() {
+  local cmd="${1:-}"
+
+  case "$cmd" in
+    config)            shift; cmd_config "$@" ;;
+    config-show)       shift; cmd_config_show "$@" ;;
+    init)              shift; cmd_init "$@" ;;
+    init-server)       shift; cmd_init_server "$@" ;;
+    init-local)        shift; cmd_init_local "$@" ;;
+    push-to-relay)     shift; cmd_push_to_relay "$@" ;;
+    server-pull)       shift; cmd_server_pull "$@" ;;
+    feature-start)     shift; cmd_feature_start "$@" ;;
+    feature-push)      shift; cmd_feature_push "$@" ;;
+    feature-pull)      shift; cmd_feature_pull "$@" ;;
+    feature-merge)     shift; cmd_feature_merge "$@" ;;
+    feature-clean)     shift; cmd_feature_clean "$@" ;;
+    sync-corp-to-relay)  shift; cmd_sync_corp_to_relay "$@" ;;
+    sync-server-to-corp) shift; cmd_sync_server_to_corp "$@" ;;
+    status)            shift; cmd_status "$@" ;;
+    --help|-h|help)    show_help ;;
+    --version|-v)      echo "git-relay ${VERSION}" ;;
+    "")
+      show_help
+      exit 0
+      ;;
+    *)
+      error "未知子命令: ${cmd}"
+      echo
+      show_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
