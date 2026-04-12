@@ -246,6 +246,7 @@ confirm() {
 # ── SSH 远程执行 ──────────────────────────────────────────────────────────────
 
 # ssh_run <命令>  — 在外网服务器上执行命令
+# 通过 stdin 传递命令脚本，避免 SSH 参数拼接对引号和换行的二次解析问题
 ssh_run() {
   local cmd="$1"
   local ssh_opts="-o StrictHostKeyChecking=accept-new"
@@ -254,7 +255,7 @@ ssh_run() {
     ssh_opts="${ssh_opts} -p ${RELAY_SSH_PORT}"
   fi
   # shellcheck disable=SC2086
-  ssh $ssh_opts "$RELAY_SSH_TARGET" bash -c "$cmd"
+  echo "$cmd" | ssh $ssh_opts "$RELAY_SSH_TARGET" bash
 }
 
 # ── 子命令实现 ────────────────────────────────────────────────────────────────
