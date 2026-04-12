@@ -492,18 +492,18 @@ git-relay init
 该命令依次完成：
 
 1. SSH 到外网服务器，创建裸仓库和目录结构
-2. 本地配置 `corp` / `relay` 两个 remote
+2. 本地配置 `<corp_remote>` / `<relay_remote>` 两个 remote（名称可在 config 中自定义）
 3. 将主分支首次推送到外网裸仓库
 4. 在外网服务器 clone 工作区
 
-完成后服务器目录结构如下：
+完成后服务器默认目录结构如下（路径可通过 `server_bare_path` / `server_work_path` 自定义）：
 
 ```
 /home/<server_user>/relay/
 ├── repos/
-│   └── my-app.git          # 裸仓库（中转节点）
+│   └── <project_name>.git   # 裸仓库（中转节点）
 └── worktrees/
-    └── my-app              # 工作区（开发节点）
+    └── <project_name>       # 工作区（开发节点）
 ```
 
 ## 日常工作流
@@ -514,7 +514,7 @@ git-relay init
 git-relay sync-corp-to-relay
 ```
 
-等价于：本地从 corp 拉取 → 推送到 relay → SSH 让服务器自动 pull。
+等价于：本地从 `corp_remote` 拉取 → 推送到 `relay_remote` → SSH 让服务器自动 pull。
 
 ### 在外网服务器上开发功能分支
 
@@ -524,7 +524,7 @@ git-relay feature-start my-feature
 
 # 2. 登录服务器进行开发
 ssh <server_user>@<server_host>
-cd ~/relay/worktrees/my-app
+cd <server_work_path>   # 默认：~/relay/worktrees/<project_name>
 # ... 编辑、git add、git commit ...
 
 # 3. 开发完毕，服务器推回裸仓库（SSH 自动执行）
@@ -552,7 +552,7 @@ git-relay sync-server-to-corp my-feature
 git-relay feature-clean my-feature
 ```
 
-一次性删除本地分支、relay remote 分支、服务器本地分支。
+一次性删除本地分支、`relay_remote` 远程分支、服务器本地分支。
 
 ## 命令参考
 
