@@ -528,7 +528,7 @@ cd <server_work_path>   # 默认：~/relay/worktrees/<project_name>
 # ... 编辑、git add、git commit ...
 
 # 3. 开发完毕，服务器推回裸仓库（SSH 自动执行）
-git-relay feature-push
+git-relay relay-push
 ```
 
 ### 将服务器功能分支同步回公司仓库
@@ -536,14 +536,14 @@ git-relay feature-push
 **逐步执行：**
 
 ```bash
-git-relay feature-pull my-feature   # 本地从 relay 拉取功能分支
-git-relay feature-merge my-feature  # 合并并推回公司仓库
+git-relay relay-pull my-feature   # 本地从 relay 拉取功能分支
+git-relay relay-merge my-feature  # 合并并推回公司仓库
 ```
 
 **或一键完成（服务器推送 + 本地拉取 + 合并 + 推公司）：**
 
 ```bash
-git-relay sync-server-to-corp my-feature
+git-relay sync-from-relay my-feature
 ```
 
 ### 清理已合并的功能分支
@@ -584,10 +584,10 @@ git-relay feature-clean my-feature
 | 命令 | 功能 |
 |---|---|
 | `git-relay feature-start <名称>` | 服务器上创建功能分支 |
-| `git-relay feature-push [名称]` | 服务器推送功能分支到裸仓库 |
-| `git-relay feature-pull <名称>` | 本地从 relay 拉取功能分支 |
-| `git-relay feature-merge <名称>` | 本地合并并推回公司仓库 |
-| `git-relay sync-server-to-corp <名称>` | 以上三步合一 |
+| `git-relay relay-push [名称]` | 服务器推送功能分支到裸仓库 |
+| `git-relay relay-pull <名称>` | 本地从 relay 拉取功能分支 |
+| `git-relay relay-merge <名称>` | 本地合并并推回公司仓库 |
+| `git-relay sync-from-relay <名称>` | 以上三步合一 |
 | `git-relay feature-clean <名称>` | 清理功能分支（本地 + relay + 服务器） |
 | `git-relay status` | 显示 remote、分支跟踪、提交图 |
 

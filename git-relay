@@ -65,13 +65,13 @@ Git 多远程中转同步工具
   server-pull          外网服务器 → 从裸仓库拉取最新代码（ssh 远程执行）
 
   feature-start <名称>  外网服务器上创建功能分支（ssh 远程执行）
-  feature-push          外网服务器将功能分支推回裸仓库（ssh 远程执行）
-  feature-pull <名称>   本地从 relay 拉取功能分支（首次或更新）
-  feature-merge <名称>  本地合并功能分支并推回公司仓库
+  relay-push          外网服务器将功能分支推回裸仓库（ssh 远程执行）
+  relay-pull <名称>   本地从 relay 拉取功能分支（首次或更新）
+  relay-merge <名称>  本地合并功能分支并推回公司仓库
   feature-clean <名称>  清理本地 + relay + 外网服务器的功能分支
 
   sync-to-relay   = push-to-relay + server-pull（一步完成同步到服务器）
-  sync-server-to-corp  = feature-push(server) + feature-pull + feature-merge（服务器提交同步回公司）
+  sync-from-relay  = relay-push(server) + relay-pull + relay-merge（服务器提交同步回公司）
 
   status               显示本地远程状态和分支跟踪关系
 
@@ -98,11 +98,11 @@ Git 多远程中转同步工具
   git-relay feature-start my-feature
 
   # 4. 开发完毕后，服务器推回裸仓库
-  git-relay feature-push
+  git-relay relay-push
 
   # 5. 本地拉回并合并推回公司
-  git-relay feature-pull my-feature
-  git-relay feature-merge my-feature
+  git-relay relay-pull my-feature
+  git-relay relay-merge my-feature
 
   # 6. 清理
   git-relay feature-clean my-feature
@@ -653,10 +653,10 @@ cmd_feature_start() {
     git branch -vv
   "
   success "功能分支 ${feature_name} 已在服务器创建"
-  info "可以登录服务器开始开发，完成后运行: git-relay feature-push"
+  info "可以登录服务器开始开发，完成后运行: git-relay relay-push"
 }
 
-# feature-push [名称] — 外网服务器将当前功能分支推回裸仓库
+# relay-push [名称] — 外网服务器将当前功能分支推回裸仓库
 cmd_feature_push() {
   local feature_name="${1:-}"
   load_conf
@@ -692,7 +692,7 @@ cmd_feature_push() {
   fi
 }
 
-# feature-pull <名称> — 本地从 relay 拉取功能分支
+# relay-pull <名称> — 本地从 relay 拉取功能分支
 cmd_feature_pull() {
   local feature_name="${1:-}"
   [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
@@ -729,7 +729,7 @@ cmd_feature_pull() {
   git log --oneline -5
 }
 
-# feature-merge <名称> — 本地合并功能分支并推回公司仓库
+# relay-merge <名称> — 本地合并功能分支并推回公司仓库
 cmd_feature_merge() {
   local feature_name="${1:-}"
   [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
@@ -743,7 +743,7 @@ cmd_feature_merge() {
 
   # 确保本地有该分支
   if ! git branch --list "$branch" | grep -q "$branch"; then
-    die "本地不存在分支 ${branch}，请先运行: git-relay feature-pull ${feature_name}"
+    die "本地不存在分支 ${branch}，请先运行: git-relay relay-pull ${feature_name}"
   fi
 
   info "更新本地主分支..."
@@ -774,7 +774,7 @@ cmd_feature_merge() {
   fi
 }
 
-# sync-server-to-corp [名称] — 服务器提交一键同步回公司仓库
+# sync-from-relay [名称] — 服务器提交一键同步回公司仓库
 cmd_sync_server_to_corp() {
   local feature_name="${1:-}"
   [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
@@ -887,12 +887,12 @@ main() {
     push-to-relay)     shift; cmd_push_to_relay "$@" ;;
     server-pull)       shift; cmd_server_pull "$@" ;;
     feature-start)     shift; cmd_feature_start "$@" ;;
-    feature-push)      shift; cmd_feature_push "$@" ;;
-    feature-pull)      shift; cmd_feature_pull "$@" ;;
-    feature-merge)     shift; cmd_feature_merge "$@" ;;
+    relay-push)      shift; cmd_feature_push "$@" ;;
+    relay-pull)      shift; cmd_feature_pull "$@" ;;
+    relay-merge)     shift; cmd_feature_merge "$@" ;;
     feature-clean)     shift; cmd_feature_clean "$@" ;;
     sync-to-relay)  shift; cmd_sync_corp_to_relay "$@" ;;
-    sync-server-to-corp) shift; cmd_sync_server_to_corp "$@" ;;
+    sync-from-relay) shift; cmd_sync_server_to_corp "$@" ;;
     status)            shift; cmd_status "$@" ;;
     --help|-h|help)    show_help ;;
     --version|-v)      echo "git-relay ${VERSION}" ;;
