@@ -607,7 +607,7 @@ cmd_push_to_relay() {
   success "公司代码已同步到外网裸仓库"
   echo
   info "本地提交概览（最近 5 条）："
-  git log --oneline -5
+  git --no-pager log --oneline -5
 }
 
 # relay-pull [分支名] — ssh 远程让服务器拉取指定分支（默认主分支）
@@ -625,7 +625,7 @@ cmd_server_pull() {
     git switch '${target_branch}' 2>/dev/null || git checkout '${target_branch}'
     git pull --ff-only origin '${target_branch}'
     echo '=== 最近 5 条提交 ==='
-    git log --oneline -5
+    git --no-pager log --oneline -5
   "
   success "服务器工作区已更新到 ${target_branch} 最新代码"
 }
@@ -675,7 +675,7 @@ cmd_feature_push() {
       cd '${RELAY_WORK_PATH}'
       git push -u origin '${feature_name}'
       echo '=== 最近 5 条提交 ==='
-      git log --oneline -5
+      git --no-pager log --oneline -5
     "
     success "功能分支 ${feature_name} 已推送到裸仓库"
   else
@@ -692,7 +692,7 @@ cmd_feature_push() {
       fi
       git push -u origin HEAD
       echo '=== 最近 5 条提交 ==='
-      git log --oneline -5
+      git --no-pager log --oneline -5
     "
     success "服务器当前分支已推送到裸仓库"
   fi
@@ -732,7 +732,7 @@ cmd_feature_pull() {
 
   echo
   info "当前分支状态："
-  git log --oneline -5
+  git --no-pager log --oneline -5
 }
 
 # relay-merge <名称> — 本地合并分支并推回公司仓库
@@ -760,7 +760,7 @@ cmd_feature_merge() {
 
     echo
     info "当前提交记录（最近 8 条）："
-    git log --oneline --graph -8
+    git --no-pager log --oneline --graph -8
     echo
 
     if ! $auto_yes; then
@@ -792,7 +792,7 @@ cmd_feature_merge() {
 
     echo
     info "合并后提交记录（最近 8 条）："
-    git log --oneline --graph -8
+    git --no-pager log --oneline --graph -8
     echo
 
     if ! $auto_yes; then
@@ -915,7 +915,7 @@ cmd_status() {
 
   echo
   info "=== 提交历史（最近 10 条，所有分支）==="
-  git log --oneline --graph --decorate --all -10
+  git --no-pager log --oneline --graph --decorate --all -10
 }
 
 # ── 入口 ──────────────────────────────────────────────────────────────────────
