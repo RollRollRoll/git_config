@@ -514,12 +514,12 @@ git-relay init
 git-relay sync-to-relay
 ```
 
-等价于：本地从 `corp_remote` 拉取 → 推送到 `relay_remote` → SSH 让服务器自动 pull。
+等价于：本地从 `corp_remote` 拉取 → 推送到 `relay_remote` → `relay-pull` 让服务器自动拉取主分支。
 
-### 在外网服务器上开发功能分支
+### 在外网服务器上开发
 
 ```bash
-# 1. 在服务器创建功能分支（SSH 自动执行）
+# 1. 在服务器创建分支（SSH 自动执行）
 git-relay feature-start my-feature
 
 # 2. 登录服务器进行开发
@@ -531,13 +531,19 @@ cd <server_work_path>   # 默认：~/relay/worktrees/<project_name>
 git-relay relay-push
 ```
 
-### 将服务器功能分支同步回公司仓库
+也可以不创建新分支，直接让服务器切换到已有分支：
+
+```bash
+git-relay relay-pull my-feature   # 服务器切换并拉取指定分支
+```
+
+### 将服务器分支同步回公司仓库
 
 **逐步执行：**
 
 ```bash
-git-relay pull-from-relay my-feature   # 本地从 relay 拉取功能分支
-git-relay relay-merge my-feature  # 合并并推回公司仓库
+git-relay pull-from-relay my-feature  # 本地从 relay 拉取分支（首次建跟踪，后续更新）
+git-relay relay-merge my-feature      # 本地合并并推回公司仓库
 ```
 
 **或一键完成（服务器推送 + 本地拉取 + 合并 + 推公司）：**
@@ -546,7 +552,7 @@ git-relay relay-merge my-feature  # 合并并推回公司仓库
 git-relay sync-from-relay my-feature
 ```
 
-### 清理已合并的功能分支
+### 清理已合并的分支
 
 ```bash
 git-relay feature-clean my-feature
@@ -561,14 +567,14 @@ git-relay feature-clean my-feature
 | 命令 | 功能 |
 |---|---|
 | `git-relay config` | 交互式配置（首次必须先执行） |
-| `git-relay config-show` | 查看当前配置 |
+| `git-relay config-show` | 查看当前生效配置及来源 |
 
 ### 初始化类（只需执行一次）
 
 | 命令 | 功能 |
 |---|---|
 | `git-relay init` | 完整初始化（推荐） |
-| `git-relay init-server` | 仅初始化外网服务器裸仓库 |
+| `git-relay init-server` | 仅在外网服务器创建裸仓库 |
 | `git-relay init-local` | 仅配置本地 remote 并首推 |
 
 ### 日常同步类
@@ -579,17 +585,17 @@ git-relay feature-clean my-feature
 | `git-relay relay-pull [分支名]` | 服务器 → 拉取指定分支（默认主分支，SSH 执行） |
 | `git-relay sync-to-relay` | 以上两步合一 |
 
-### 功能分支类
+### 分支操作类
 
 | 命令 | 功能 |
 |---|---|
-| `git-relay feature-start <名称>` | 服务器上创建功能分支 |
-| `git-relay relay-push [名称]` | 服务器推送功能分支到裸仓库 |
-| `git-relay pull-from-relay <名称>` | 本地从 relay 拉取功能分支 |
-| `git-relay relay-merge <名称>` | 本地合并并推回公司仓库 |
-| `git-relay sync-from-relay <名称>` | 以上三步合一 |
-| `git-relay feature-clean <名称>` | 清理功能分支（本地 + relay + 服务器） |
-| `git-relay status` | 显示 remote、分支跟踪、提交图 |
+| `git-relay feature-start <名称>` | 服务器上创建并切换到新分支（SSH 执行） |
+| `git-relay relay-push [名称]` | 服务器推送当前/指定分支到裸仓库（SSH 执行） |
+| `git-relay pull-from-relay <名称>` | 本地从 relay 拉取分支（首次建跟踪，后续更新） |
+| `git-relay relay-merge <名称>` | 本地合并指定分支并推回公司仓库 |
+| `git-relay sync-from-relay <名称>` | relay-push + pull-from-relay + relay-merge 三步合一 |
+| `git-relay feature-clean <名称>` | 清理分支（本地 + relay remote + 服务器） |
+| `git-relay status` | 显示 remote 列表、分支跟踪、提交图 |
 
 ## 配置文件
 
