@@ -536,7 +536,7 @@ git-relay relay-push
 **逐步执行：**
 
 ```bash
-git-relay relay-pull my-feature   # 本地从 relay 拉取功能分支
+git-relay pull-from-relay my-feature   # 本地从 relay 拉取功能分支
 git-relay relay-merge my-feature  # 合并并推回公司仓库
 ```
 
@@ -576,7 +576,7 @@ git-relay feature-clean my-feature
 | 命令 | 功能 |
 |---|---|
 | `git-relay push-to-relay` | 本地 → 推送主分支到 relay |
-| `git-relay server-pull` | 服务器 → 拉取主分支（SSH 执行） |
+| `git-relay relay-pull [分支名]` | 服务器 → 拉取指定分支（默认主分支，SSH 执行） |
 | `git-relay sync-to-relay` | 以上两步合一 |
 
 ### 功能分支类
@@ -585,7 +585,7 @@ git-relay feature-clean my-feature
 |---|---|
 | `git-relay feature-start <名称>` | 服务器上创建功能分支 |
 | `git-relay relay-push [名称]` | 服务器推送功能分支到裸仓库 |
-| `git-relay relay-pull <名称>` | 本地从 relay 拉取功能分支 |
+| `git-relay pull-from-relay <名称>` | 本地从 relay 拉取功能分支 |
 | `git-relay relay-merge <名称>` | 本地合并并推回公司仓库 |
 | `git-relay sync-from-relay <名称>` | 以上三步合一 |
 | `git-relay feature-clean <名称>` | 清理功能分支（本地 + relay + 服务器） |

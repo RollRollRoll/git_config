@@ -143,7 +143,7 @@ SSH 执行服务器上的 `git push -u origin HEAD`，将功能分支推入裸�
 
 ```bash
 # 本地拉取功能分支（首次自动建立跟踪，后续自动更新）
-git-relay relay-pull my-feature
+git-relay pull-from-relay my-feature
 
 # 本地合并并推回公司仓库
 git-relay relay-merge my-feature
@@ -198,7 +198,8 @@ git-relay init-local      # 仅配置本地 remote 并首推
 
 ```bash
 git-relay push-to-relay               # 本地 → 推送主分支到 relay
-git-relay server-pull                 # 服务器 → 拉取主分支（SSH 执行）
+git-relay relay-pull                 # 服务器 → 拉取主分支（SSH 执行）
+git-relay relay-pull <分支名>        # 服务器 → 拉取指定分支
 git-relay sync-to-relay          # 以上两步合一
 ```
 
@@ -207,7 +208,7 @@ git-relay sync-to-relay          # 以上两步合一
 ```bash
 git-relay feature-start <名称>        # 服务器上创建功能分支
 git-relay relay-push [名称]         # 服务器推送功能分支到裸仓库
-git-relay relay-pull <名称>         # 本地从 relay 拉取功能分支
+git-relay pull-from-relay <名称>         # 本地从 relay 拉取功能分支
 git-relay relay-merge <名称>        # 本地合并并推回公司仓库
 git-relay sync-from-relay <名称>  # 以上三步合一
 git-relay feature-clean <名称>        # 清理功能分支
@@ -322,7 +323,7 @@ git switch feature/my-feature
 | 一次性初始化 §1–§5 | `git-relay init` |
 | 日常同步 §1 公司→外网 | `git-relay sync-to-relay` |
 | 日常同步 §2 服务器功能分支 | `git-relay feature-start` |
-| 日常同步 §3 本地拉回功能分支 | `git-relay relay-pull` |
+| 日常同步 §3 本地拉回功能分支 | `git-relay pull-from-relay` |
 | 日常同步 §4 合并推回公司 | `git-relay relay-merge` |
 | 日常同步 §5 清理 | `git-relay feature-clean` |
 | 最小闭环流程 | `git-relay sync-to-relay` + `git-relay sync-from-relay` |
