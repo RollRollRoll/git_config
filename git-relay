@@ -2,7 +2,7 @@
 # git-relay — Git 多远程中转同步工具
 # 适用场景：外网服务器不能直接访问公司 Git 服务器时的代码中转同步
 #
-# 链路：公司仓库(corp) <-> 本地工作仓库 <-> 外网裸仓库(relay) <-> 外网工作区
+# 链路：原始仓库(corp) <-> 本地工作仓库 <-> 外网裸仓库(relay) <-> 外网工作区
 set -euo pipefail
 
 VERSION="0.1.0"
@@ -52,7 +52,7 @@ show_help() {
 Usage: git-relay <子命令> [选项]
 
 Git 多远程中转同步工具
-链路：公司仓库(corp) ↔ 本地 ↔ 外网裸仓库(relay) ↔ 外网工作区
+链路：原始仓库(corp) ↔ 本地 ↔ 外网裸仓库(relay) ↔ 外网工作区
 
 子命令：
   config               配置中转连接参数（交互式，首次运行必须先执行）
@@ -67,7 +67,7 @@ Git 多远程中转同步工具
   feature-start <名称>  外网服务器上创建功能分支（ssh 远程执行）
   relay-push          外网服务器将功能分支推回裸仓库（ssh 远程执行）
   pull-from-relay <名称>   本地从 relay 拉取功能分支（首次或更新）
-  relay-merge <名称>  本地合并功能分支并推回公司仓库
+  relay-merge <名称>  本地合并功能分支并推回原始仓库
   feature-clean <名称>  清理本地 + relay + 外网服务器的功能分支
 
   sync-to-relay   = push-to-relay + relay-pull（一步完成同步到服务器，relay-pull 使用主分支）
@@ -168,7 +168,7 @@ load_conf() {
 
   # corp URL：优先从配置读取，其次从已有 remote 获取
   RELAY_CORP_URL="$(conf_get corp_url 2>/dev/null || git remote get-url "$RELAY_CORP_REMOTE" 2>/dev/null || echo '')"
-  [[ -n "$RELAY_CORP_URL" ]] || die "无法确定公司仓库 URL，请重新运行: git-relay config"
+  [[ -n "$RELAY_CORP_URL" ]] || die "无法确定原始仓库 URL，请重新运行: git-relay config"
 
   # SSH 连接目标：有 server_user 则用 user@host，否则直接用 host（依赖 SSH config）
   if [[ -n "$RELAY_SERVER_USER" ]]; then
@@ -332,7 +332,7 @@ cmd_config() {
   prompt_input_optional "SSH 端口 (ssh_port，SSH config 中有则留空)"          v_port "$cur_port"
   prompt_input "项目名 (project_name)"             v_project      "$cur_project"
   prompt_input "默认分支 (default_branch)"         v_branch       "$cur_branch"
-  prompt_input "公司仓库 remote 名 (corp_remote)"  v_corp_remote  "$cur_corp_remote"
+  prompt_input "原始仓库 remote 名 (corp_remote)"  v_corp_remote  "$cur_corp_remote"
   prompt_input "中转仓库 remote 名 (relay_remote)" v_relay_remote "$cur_relay_remote"
 
   # 服务器路径：计算默认值供展示，允许用户覆盖
@@ -346,7 +346,7 @@ cmd_config() {
   prompt_input "裸仓库路径 (server_bare_path)" v_bare_path "$cur_bare"
   prompt_input "工作区路径 (server_work_path)" v_work_path "$cur_work"
 
-  # ── 公司仓库 URL：选择已有 remote 或手动输入 ────────────────────────────
+  # ── 原始仓库 URL：选择已有 remote 或手动输入 ────────────────────────────
   local v_corp_url=""
   local existing_remotes=()
   if git rev-parse --git-dir &>/dev/null 2>&1; then
@@ -357,7 +357,7 @@ cmd_config() {
 
   if [[ ${#existing_remotes[@]} -gt 0 ]]; then
     echo
-    echo "公司仓库 URL 来源："
+    echo "原始仓库 URL 来源："
     echo "  0) 手动输入 URL"
     local i=1
     for r in "${existing_remotes[@]}"; do
@@ -385,7 +385,7 @@ cmd_config() {
   fi
 
   if [[ -z "$v_corp_url" && "$url_choice" == "0" ]]; then
-    prompt_input "公司仓库 URL (corp_url)" v_corp_url "$cur_corp_url"
+    prompt_input "原始仓库 URL (corp_url)" v_corp_url "$cur_corp_url"
   fi
 
   conf_set server_host    "$v_host"
@@ -641,7 +641,7 @@ cmd_server_pull() {
 # sync-to-relay — push-to-relay + relay-pull 一步完成
 cmd_sync_corp_to_relay() {
   load_conf
-  step "全链路同步：公司仓库 → 本地 → relay → 服务器工作区"
+  step "全链路同步：原始仓库 → 本地 → relay → 服务器工作区"
   cmd_push_to_relay
   echo
   cmd_server_pull
@@ -743,7 +743,7 @@ cmd_feature_pull() {
   git --no-pager log --oneline -5
 }
 
-# relay-merge <名称> — 本地合并分支并推回公司仓库
+# relay-merge <名称> — 本地合并分支并推回原始仓库
 # 若分支本身就是主分支，跳过 merge 直接推送
 cmd_feature_merge() {
   local auto_yes=false
@@ -762,7 +762,7 @@ cmd_feature_merge() {
 
   if [[ "$branch" == "$RELAY_BRANCH" ]]; then
     # ── 分支本身就是主分支：直接推送，无需 merge ──────────────────────
-    step "本地 → 将 ${branch} 推回公司仓库"
+    step "本地 → 将 ${branch} 推回原始仓库"
 
     git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
 
@@ -776,7 +776,7 @@ cmd_feature_merge() {
     fi
 
     git push "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
-    success "已推送到公司仓库"
+    success "已推送到原始仓库"
 
     info "同步回 ${RELAY_RELAY_REMOTE}..."
     git push "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
@@ -784,7 +784,7 @@ cmd_feature_merge() {
 
   else
     # ── 功能分支：merge 进主分支再推送 ────────────────────────────────
-    step "本地 → 合并 ${branch} 并推回公司仓库"
+    step "本地 → 合并 ${branch} 并推回原始仓库"
 
     if ! git branch --list "$branch" | grep -q "$branch"; then
       die "本地不存在分支 ${branch}，请先运行: git-relay pull-from-relay ${feature_name}"
@@ -808,7 +808,7 @@ cmd_feature_merge() {
     fi
 
     git push "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
-    success "已推送到公司仓库"
+    success "已推送到原始仓库"
 
     info "同步回 ${RELAY_RELAY_REMOTE}..."
     git push "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
@@ -822,20 +822,20 @@ cmd_feature_merge() {
   fi
 }
 
-# sync-from-relay [名称] — 服务器提交一键同步回公司仓库
+# sync-from-relay [名称] — 服务器提交一键同步回原始仓库
 cmd_sync_server_to_corp() {
   local feature_name="${1:-}"
   [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
   load_conf
-  step "全链路同步：服务器功能分支 → relay → 本地 → 公司仓库"
+  step "全链路同步：服务器功能分支 → relay → 本地 → 原始仓库"
   echo "本命令将依次执行："
   echo "  1. 服务器推送 ${feature_name} 到裸仓库"
   echo "  2. 本地从 relay 拉取该分支"
   if [[ "$feature_name" == "$RELAY_BRANCH" ]]; then
-    echo "  3. 将本地 ${feature_name} 直接推回公司仓库（无需 merge）"
+    echo "  3. 将本地 ${feature_name} 直接推回原始仓库（无需 merge）"
   else
-    echo "  3. 本地合并并推回公司仓库"
+    echo "  3. 本地合并并推回原始仓库"
   fi
   echo
   confirm "确认继续？" || die "已取消"

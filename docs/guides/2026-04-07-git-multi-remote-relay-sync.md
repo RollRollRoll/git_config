@@ -5,16 +5,16 @@
 在“外网服务器不能直接访问公司 Git 服务器”的前提下，建立一套稳定的代码同步链路：
 
 ```text
-公司仓库(corp) <-> 本地工作仓库 <-> 外网裸仓库(relay) <-> 外网工作区
+原始仓库(corp) <-> 本地工作仓库 <-> 外网裸仓库(relay) <-> 外网工作区
 ```
 
 该方案用于实现以下目标：
 
-- 本地从公司仓库拉取代码
+- 本地从原始仓库拉取代码
 - 本地将代码同步到外网服务器上的裸仓库
 - 外网服务器从裸仓库检出工作区并编辑代码
 - 服务器上的提交先推回裸仓库
-- 本地再从裸仓库拉回改动并推回公司仓库
+- 本地再从裸仓库拉回改动并推回原始仓库
 
 ## 角色定义
 
@@ -33,7 +33,7 @@
 
 请按实际环境替换以下占位符：
 
-- `<公司仓库URL>`：公司 Git 仓库地址
+- `<原始仓库URL>`：公司 Git 仓库地址
 - `<server-user>`：外网服务器用户名
 - `<server-host>`：外网服务器地址
 - `<project-name>`：项目名
@@ -56,9 +56,9 @@
 ## 约束原则
 
 - 本地是唯一能同时访问 `corp` 和 `relay` 的节点
-- 外网服务器上禁止配置公司仓库 remote
+- 外网服务器上禁止配置原始仓库 remote
 - 外网服务器只和裸仓库通信
-- 推回公司仓库的动作只能在本地执行
+- 推回原始仓库的动作只能在本地执行
 - 外网服务器上的开发优先使用功能分支，不直接在主分支长期开发
 
 ## 一次性初始化
@@ -94,7 +94,7 @@ git --git-dir="/home/<server-user>/relay/repos/<project-name>.git" symbolic-ref 
 如果本地还没有仓库：
 
 ```bash
-git clone "<公司仓库URL>" "<project-name>"
+git clone "<原始仓库URL>" "<project-name>"
 cd "<project-name>"
 git remote rename origin corp
 ```
@@ -114,8 +114,8 @@ git remote -v
 预期结果：
 
 ```text
-corp    <公司仓库URL> (fetch)
-corp    <公司仓库URL> (push)
+corp    <原始仓库URL> (fetch)
+corp    <原始仓库URL> (push)
 ```
 
 ### 3. 本地添加中转远程 `relay`
@@ -244,7 +244,7 @@ git switch "feature/<topic>"
 git pull --ff-only relay "feature/<topic>"
 ```
 
-### 4. 本地合并并推回公司仓库
+### 4. 本地合并并推回原始仓库
 
 先更新本地主分支：
 
@@ -260,7 +260,7 @@ git pull --ff-only corp <default-branch>
 git merge --no-ff "feature/<topic>"
 ```
 
-验证通过后推回公司仓库：
+验证通过后推回原始仓库：
 
 ```bash
 git push corp <default-branch>
@@ -326,7 +326,7 @@ git commit -m "feat: server update"
 git push origin HEAD
 ```
 
-### 4. 本地拉回并推回公司仓库
+### 4. 本地拉回并推回原始仓库
 
 如果服务器上使用的是功能分支：
 
@@ -345,7 +345,7 @@ git push relay <default-branch>
 - 冲突优先在本地处理，不在外网服务器处理主分支冲突
 - 外网服务器不要对公共分支执行 `git push --force`
 - 外网服务器不要直接改写 `origin/<default-branch>` 历史
-- 公司仓库只接受本地推送
+- 原始仓库只接受本地推送
 
 如果服务器功能分支落后于公司主分支，建议在本地处理：
 
@@ -413,7 +413,7 @@ git log --oneline --graph --decorate --all -20
 
 现象：
 
-- 外网服务器上 `git remote -v` 出现公司仓库地址
+- 外网服务器上 `git remote -v` 出现原始仓库地址
 
 处理：
 
@@ -503,10 +503,10 @@ git push relay <default-branch>
 
 该方案的本质是：
 
-- 本地负责连接公司仓库
+- 本地负责连接原始仓库
 - 外网服务器负责远程开发
 - 裸仓库负责中转
 - 公司代码永远不直接暴露给外网服务器的远程配置
-- 所有正式回流公司仓库的操作都由本地完成
+- 所有正式回流原始仓库的操作都由本地完成
 
 这是一套风险可控、职责清晰、适合长期使用的 Git 多远程同步方案。

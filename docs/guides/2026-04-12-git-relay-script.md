@@ -8,14 +8,14 @@
 **适用场景**：外网服务器无法直接访问公司 Git 服务器时，建立如下同步链路：
 
 ```
-公司仓库 (corp)  ↔  本地工作仓库  ↔  外网裸仓库 (relay)  ↔  外网服务器工作区
+原始仓库 (corp)  ↔  本地工作仓库  ↔  外网裸仓库 (relay)  ↔  外网服务器工作区
 ```
 
 **核心约束**（与手册保持一致）：
 
 - 本地是唯一能同时连接 `corp` 和 `relay` 的节点
 - 外网服务器只与裸仓库通信，不配置 `corp` remote
-- 所有回流公司仓库的操作只能在本地执行
+- 所有回流原始仓库的操作只能在本地执行
 
 ---
 
@@ -102,7 +102,7 @@ git-relay sync-to-relay
 服务器：git pull origin（SSH 自动执行）
 ```
 
-执行后，外网服务器工作区已是公司仓库最新代码，可以开始开发。
+执行后，外网服务器工作区已是原始仓库最新代码，可以开始开发。
 
 ---
 
@@ -137,7 +137,7 @@ SSH 执行服务器上的 `git push -u origin HEAD`，将功能分支推入裸�
 
 ---
 
-### 场景三：本地将服务器功能分支同步回公司仓库
+### 场景三：本地将服务器功能分支同步回原始仓库
 
 **逐步执行：**
 
@@ -145,7 +145,7 @@ SSH 执行服务器上的 `git push -u origin HEAD`，将功能分支推入裸�
 # 本地拉取功能分支（首次自动建立跟踪，后续自动更新）
 git-relay pull-from-relay my-feature
 
-# 本地合并并推回公司仓库
+# 本地合并并推回原始仓库
 git-relay relay-merge my-feature
 ```
 
@@ -209,7 +209,7 @@ git-relay sync-to-relay          # 以上两步合一
 git-relay feature-start <名称>        # 服务器上创建功能分支
 git-relay relay-push [名称]         # 服务器推送功能分支到裸仓库
 git-relay pull-from-relay <名称>         # 本地从 relay 拉取功能分支
-git-relay relay-merge <名称>        # 本地合并并推回公司仓库
+git-relay relay-merge <名称>        # 本地合并并推回原始仓库
 git-relay sync-from-relay <名称>  # 以上三步合一
 git-relay feature-clean <名称>        # 清理功能分支
 ```

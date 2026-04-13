@@ -434,14 +434,14 @@ git config --global --unset alias.profile  # 删除 git 别名
 在"外网服务器不能直接访问公司 Git 服务器"的场景下，`git-relay` 将手册中的每个操作序列封装为单条命令，实现以下链路的一键管理：
 
 ```
-公司仓库 (corp)  ↔  本地工作仓库  ↔  外网裸仓库 (relay)  ↔  外网服务器工作区
+原始仓库 (corp)  ↔  本地工作仓库  ↔  外网裸仓库 (relay)  ↔  外网服务器工作区
 ```
 
 **核心约束**：
 
 - 本地是唯一能同时连接 `corp` 和 `relay` 的节点
 - 外网服务器只与裸仓库通信，不配置 `corp` remote
-- 所有回流公司仓库的操作只能在本地执行
+- 所有回流原始仓库的操作只能在本地执行
 
 ## 快速开始
 
@@ -470,9 +470,9 @@ git-relay config
 | `ssh_port` | SSH 端口（**可选**，SSH config 中有则留空） | `2222` |
 | `project_name` | 项目名（默认预填目录名） | `my-app` |
 | `default_branch` | 默认分支 | `main` |
-| `corp_remote` | 公司仓库 remote 名 | `corp` |
+| `corp_remote` | 原始仓库 remote 名 | `corp` |
 | `relay_remote` | 中转仓库 remote 名 | `relay` |
-| `corp_url` | 公司仓库 URL（可选择已有 remote 代替手动输入） | `git@corp.example.com:team/my-app.git` |
+| `corp_url` | 原始仓库 URL（可选择已有 remote 代替手动输入） | `git@corp.example.com:team/my-app.git` |
 | `server_bare_path` | 服务器裸仓库路径（可选，有默认值） | `/data/repos/my-app.git` |
 | `server_work_path` | 服务器工作区路径（可选，有默认值） | `/data/worktrees/my-app` |
 
@@ -537,13 +537,13 @@ git-relay relay-push
 git-relay relay-pull my-feature   # 服务器切换并拉取指定分支
 ```
 
-### 将服务器分支同步回公司仓库
+### 将服务器分支同步回原始仓库
 
 **逐步执行：**
 
 ```bash
 git-relay pull-from-relay my-feature  # 本地从 relay 拉取分支（首次建跟踪，后续更新）
-git-relay relay-merge my-feature      # 本地合并并推回公司仓库
+git-relay relay-merge my-feature      # 本地合并并推回原始仓库
 ```
 
 **或一键完成（服务器推送 + 本地拉取 + 合并 + 推公司）：**
@@ -592,7 +592,7 @@ git-relay feature-clean my-feature
 | `git-relay feature-start <名称>` | 服务器上创建并切换到新分支（SSH 执行） |
 | `git-relay relay-push [名称]` | 服务器推送当前/指定分支到裸仓库（SSH 执行） |
 | `git-relay pull-from-relay <名称>` | 本地从 relay 拉取分支（首次建跟踪，后续更新） |
-| `git-relay relay-merge <名称>` | 本地合并指定分支并推回公司仓库 |
+| `git-relay relay-merge <名称>` | 本地合并指定分支并推回原始仓库 |
 | `git-relay sync-from-relay <名称>` | relay-push + pull-from-relay + relay-merge 三步合一 |
 | `git-relay feature-clean <名称>` | 清理分支（本地 + relay remote + 服务器） |
 | `git-relay status` | 显示 remote 列表、分支跟踪、提交图 |
