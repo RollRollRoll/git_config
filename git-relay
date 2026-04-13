@@ -732,48 +732,71 @@ cmd_feature_pull() {
   git log --oneline -5
 }
 
-# relay-merge <名称> — 本地合并功能分支并推回公司仓库
+# relay-merge <名称> — 本地合并分支并推回公司仓库
+# 若分支本身就是主分支，跳过 merge 直接推送
 cmd_feature_merge() {
   local feature_name="${1:-}"
   [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
   load_conf
-  step "本地 → 合并 ${feature_name} 并推回公司仓库"
-
-  git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
 
   local branch="${feature_name}"
 
-  # 确保本地有该分支
-  if ! git branch --list "$branch" | grep -q "$branch"; then
-    die "本地不存在分支 ${branch}，请先运行: git-relay pull-from-relay ${feature_name}"
-  fi
+  git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
 
-  info "更新本地主分支..."
-  git fetch "$RELAY_CORP_REMOTE" --prune
-  git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
-  git pull --ff-only "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+  if [[ "$branch" == "$RELAY_BRANCH" ]]; then
+    # ── 分支本身就是主分支：直接推送，无需 merge ──────────────────────
+    step "本地 → 将 ${branch} 推回公司仓库"
 
-  info "合并 ${branch}（--no-ff）..."
-  git merge --no-ff "$branch"
+    git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
 
-  echo
-  info "合并后提交记录（最近 8 条）："
-  git log --oneline --graph -8
-  echo
+    echo
+    info "当前提交记录（最近 8 条）："
+    git log --oneline --graph -8
+    echo
 
-  confirm "确认推送到 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}？" || die "已取消，保留合并结果，可手动推送"
+    confirm "确认推送到 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}？" || die "已取消"
 
-  git push "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
-  success "已推送到公司仓库"
+    git push "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+    success "已推送到公司仓库"
 
-  info "同步回 ${RELAY_RELAY_REMOTE}..."
-  git push "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
-  success "${RELAY_RELAY_REMOTE} 主分支已同步"
+    info "同步回 ${RELAY_RELAY_REMOTE}..."
+    git push "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
+    success "${RELAY_RELAY_REMOTE} 主分支已同步"
 
-  # 更新服务器工作区主分支
-  if confirm "是否同时更新外网服务器工作区主分支？"; then
-    cmd_server_pull
+  else
+    # ── 功能分支：merge 进主分支再推送 ────────────────────────────────
+    step "本地 → 合并 ${branch} 并推回公司仓库"
+
+    if ! git branch --list "$branch" | grep -q "$branch"; then
+      die "本地不存在分支 ${branch}，请先运行: git-relay pull-from-relay ${feature_name}"
+    fi
+
+    info "更新本地主分支..."
+    git fetch "$RELAY_CORP_REMOTE" --prune
+    git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+    git pull --ff-only "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+
+    info "合并 ${branch}（--no-ff）..."
+    git merge --no-ff "$branch"
+
+    echo
+    info "合并后提交记录（最近 8 条）："
+    git log --oneline --graph -8
+    echo
+
+    confirm "确认推送到 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}？" || die "已取消，保留合并结果，可手动推送"
+
+    git push "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+    success "已推送到公司仓库"
+
+    info "同步回 ${RELAY_RELAY_REMOTE}..."
+    git push "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
+    success "${RELAY_RELAY_REMOTE} 主分支已同步"
+
+    if confirm "是否同时更新外网服务器工作区主分支？"; then
+      cmd_server_pull
+    fi
   fi
 }
 
@@ -787,7 +810,11 @@ cmd_sync_server_to_corp() {
   echo "本命令将依次执行："
   echo "  1. 服务器推送 ${feature_name} 到裸仓库"
   echo "  2. 本地从 relay 拉取该分支"
-  echo "  3. 本地合并并推回公司仓库"
+  if [[ "$feature_name" == "$RELAY_BRANCH" ]]; then
+    echo "  3. 将本地 ${feature_name} 直接推回公司仓库（无需 merge）"
+  else
+    echo "  3. 本地合并并推回公司仓库"
+  fi
   echo
   confirm "确认继续？" || die "已取消"
 
