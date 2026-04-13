@@ -738,6 +738,11 @@ cmd_feature_pull() {
 # relay-merge <名称> — 本地合并分支并推回公司仓库
 # 若分支本身就是主分支，跳过 merge 直接推送
 cmd_feature_merge() {
+  local auto_yes=false
+  if [[ "${1:-}" == "--yes" ]]; then
+    auto_yes=true
+    shift
+  fi
   local feature_name="${1:-}"
   [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
@@ -758,7 +763,9 @@ cmd_feature_merge() {
     git log --oneline --graph -8
     echo
 
-    confirm "确认推送到 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}？" || die "已取消"
+    if ! $auto_yes; then
+      confirm "确认推送到 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}？" || die "已取消"
+    fi
 
     git push "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
     success "已推送到公司仓库"
@@ -788,7 +795,9 @@ cmd_feature_merge() {
     git log --oneline --graph -8
     echo
 
-    confirm "确认推送到 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}？" || die "已取消，保留合并结果，可手动推送"
+    if ! $auto_yes; then
+      confirm "确认推送到 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}？" || die "已取消，保留合并结果，可手动推送"
+    fi
 
     git push "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
     success "已推送到公司仓库"
@@ -797,8 +806,10 @@ cmd_feature_merge() {
     git push "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
     success "${RELAY_RELAY_REMOTE} 主分支已同步"
 
-    if confirm "是否同时更新外网服务器工作区主分支？"; then
-      cmd_server_pull
+    if ! $auto_yes; then
+      if confirm "是否同时更新外网服务器工作区主分支？"; then
+        cmd_server_pull
+      fi
     fi
   fi
 }
@@ -825,7 +836,7 @@ cmd_sync_server_to_corp() {
   echo
   cmd_feature_pull "$feature_name"
   echo
-  cmd_feature_merge "$feature_name"
+  cmd_feature_merge --yes "$feature_name"
 }
 
 # feature-clean <名称> — 清理功能分支（本地 + relay + 服务器）
