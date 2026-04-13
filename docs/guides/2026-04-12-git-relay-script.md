@@ -92,7 +92,7 @@ git-relay init
 ### 场景一：开始远程开发前，同步公司最新代码
 
 ```bash
-git-relay sync-corp-to-relay
+git-relay sync-to-relay
 ```
 
 等价于：
@@ -130,7 +130,7 @@ git commit -m "feat: 实现某功能"
 **3. 开发完毕，服务器推回裸仓库**
 
 ```bash
-git-relay feature-push
+git-relay relay-push
 ```
 
 SSH 执行服务器上的 `git push -u origin HEAD`，将功能分支推入裸仓库。
@@ -143,19 +143,19 @@ SSH 执行服务器上的 `git push -u origin HEAD`，将功能分支推入裸�
 
 ```bash
 # 本地拉取功能分支（首次自动建立跟踪，后续自动更新）
-git-relay feature-pull my-feature
+git-relay relay-pull my-feature
 
 # 本地合并并推回公司仓库
-git-relay feature-merge my-feature
+git-relay relay-merge my-feature
 ```
 
 **或一键完成（服务器推送 + 本地拉取 + 合并 + 推公司）：**
 
 ```bash
-git-relay sync-server-to-corp my-feature
+git-relay sync-from-relay my-feature
 ```
 
-`feature-merge` 执行时会显示合并结果并要求确认，确认后：
+`relay-merge` 执行时会显示合并结果并要求确认，确认后：
 
 1. 推送到 `corp` 主分支
 2. 同步回 `relay` 主分支
@@ -199,17 +199,17 @@ git-relay init-local      # 仅配置本地 remote 并首推
 ```bash
 git-relay push-to-relay               # 本地 → 推送主分支到 relay
 git-relay server-pull                 # 服务器 → 拉取主分支（SSH 执行）
-git-relay sync-corp-to-relay          # 以上两步合一
+git-relay sync-to-relay          # 以上两步合一
 ```
 
 ### 功能分支类
 
 ```bash
 git-relay feature-start <名称>        # 服务器上创建功能分支
-git-relay feature-push [名称]         # 服务器推送功能分支到裸仓库
-git-relay feature-pull <名称>         # 本地从 relay 拉取功能分支
-git-relay feature-merge <名称>        # 本地合并并推回公司仓库
-git-relay sync-server-to-corp <名称>  # 以上三步合一
+git-relay relay-push [名称]         # 服务器推送功能分支到裸仓库
+git-relay relay-pull <名称>         # 本地从 relay 拉取功能分支
+git-relay relay-merge <名称>        # 本地合并并推回公司仓库
+git-relay sync-from-relay <名称>  # 以上三步合一
 git-relay feature-clean <名称>        # 清理功能分支
 ```
 
@@ -278,7 +278,7 @@ ssh <server_user>@<server_host> echo ok
 ssh <server_user>@<server_host> ls ~/relay/repos/
 ```
 
-### Q：`feature-merge` 报 `--ff-only` 失败
+### Q：`relay-merge` 报 `--ff-only` 失败
 
 说明公司主分支在你拉取之后又有新提交，需要先 rebase 功能分支：
 
@@ -288,7 +288,7 @@ git switch main
 git pull --ff-only corp main
 git switch feature/my-feature
 git rebase main              # 或 git merge main（不改写历史）
-git-relay feature-merge my-feature
+git-relay relay-merge my-feature
 ```
 
 ### Q：服务器工作区拉不到新分支
@@ -311,7 +311,7 @@ git switch feature/my-feature
 # ... 继续开发 ...
 ```
 
-完成后照常执行 `git-relay feature-push`。
+完成后照常执行 `git-relay relay-push`。
 
 ---
 
@@ -320,11 +320,11 @@ git switch feature/my-feature
 | 手册章节 | 对应命令 |
 |---|---|
 | 一次性初始化 §1–§5 | `git-relay init` |
-| 日常同步 §1 公司→外网 | `git-relay sync-corp-to-relay` |
+| 日常同步 §1 公司→外网 | `git-relay sync-to-relay` |
 | 日常同步 §2 服务器功能分支 | `git-relay feature-start` |
-| 日常同步 §3 本地拉回功能分支 | `git-relay feature-pull` |
-| 日常同步 §4 合并推回公司 | `git-relay feature-merge` |
+| 日常同步 §3 本地拉回功能分支 | `git-relay relay-pull` |
+| 日常同步 §4 合并推回公司 | `git-relay relay-merge` |
 | 日常同步 §5 清理 | `git-relay feature-clean` |
-| 最小闭环流程 | `git-relay sync-corp-to-relay` + `git-relay sync-server-to-corp` |
+| 最小闭环流程 | `git-relay sync-to-relay` + `git-relay sync-from-relay` |
 
 原始手册：[2026-04-07-git-multi-remote-relay-sync.md](./2026-04-07-git-multi-remote-relay-sync.md)
