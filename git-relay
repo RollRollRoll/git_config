@@ -638,21 +638,21 @@ cmd_sync_corp_to_relay() {
 # feature-start <名称> — 在外网服务器创建功能分支
 cmd_feature_start() {
   local feature_name="${1:-}"
-  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+  [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
   load_conf
-  step "外网服务器 → 创建功能分支: feature/${feature_name}"
+  step "外网服务器 → 创建功能分支: ${feature_name}"
 
   ssh_run "
     set -e
     cd '${RELAY_WORK_PATH}'
     git switch '${RELAY_BRANCH}' 2>/dev/null || git checkout '${RELAY_BRANCH}'
     git pull --ff-only origin '${RELAY_BRANCH}'
-    git switch -c 'feature/${feature_name}'
-    echo '已创建并切换到分支: feature/${feature_name}'
+    git switch -c '${feature_name}'
+    echo '已创建并切换到分支: ${feature_name}'
     git branch -vv
   "
-  success "功能分支 feature/${feature_name} 已在服务器创建"
+  success "功能分支 ${feature_name} 已在服务器创建"
   info "可以登录服务器开始开发，完成后运行: git-relay feature-push"
 }
 
@@ -667,11 +667,11 @@ cmd_feature_push() {
     ssh_run "
       set -e
       cd '${RELAY_WORK_PATH}'
-      git push -u origin 'feature/${feature_name}'
+      git push -u origin '${feature_name}'
       echo '=== 最近 5 条提交 ==='
       git log --oneline -5
     "
-    success "功能分支 feature/${feature_name} 已推送到裸仓库"
+    success "功能分支 ${feature_name} 已推送到裸仓库"
   else
     # 推当前分支
     info "将推送服务器当前所在分支..."
@@ -695,17 +695,17 @@ cmd_feature_push() {
 # feature-pull <名称> — 本地从 relay 拉取功能分支
 cmd_feature_pull() {
   local feature_name="${1:-}"
-  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+  [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
   load_conf
-  step "本地 → 从 relay 拉取功能分支: feature/${feature_name}"
+  step "本地 → 从 relay 拉取功能分支: ${feature_name}"
 
   git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
 
   info "从 ${RELAY_RELAY_REMOTE} 获取最新分支信息..."
   git fetch "$RELAY_RELAY_REMOTE" --prune
 
-  local branch="feature/${feature_name}"
+  local branch="${feature_name}"
 
   # 检查 relay 上是否有该分支
   if ! git branch -r | grep -q "${RELAY_RELAY_REMOTE}/${branch}"; then
@@ -732,14 +732,14 @@ cmd_feature_pull() {
 # feature-merge <名称> — 本地合并功能分支并推回公司仓库
 cmd_feature_merge() {
   local feature_name="${1:-}"
-  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+  [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
   load_conf
-  step "本地 → 合并 feature/${feature_name} 并推回公司仓库"
+  step "本地 → 合并 ${feature_name} 并推回公司仓库"
 
   git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
 
-  local branch="feature/${feature_name}"
+  local branch="${feature_name}"
 
   # 确保本地有该分支
   if ! git branch --list "$branch" | grep -q "$branch"; then
@@ -777,12 +777,12 @@ cmd_feature_merge() {
 # sync-server-to-corp [名称] — 服务器提交一键同步回公司仓库
 cmd_sync_server_to_corp() {
   local feature_name="${1:-}"
-  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+  [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
   load_conf
   step "全链路同步：服务器功能分支 → relay → 本地 → 公司仓库"
   echo "本命令将依次执行："
-  echo "  1. 服务器推送 feature/${feature_name} 到裸仓库"
+  echo "  1. 服务器推送 ${feature_name} 到裸仓库"
   echo "  2. 本地从 relay 拉取该分支"
   echo "  3. 本地合并并推回公司仓库"
   echo
@@ -798,19 +798,19 @@ cmd_sync_server_to_corp() {
 # feature-clean <名称> — 清理功能分支（本地 + relay + 服务器）
 cmd_feature_clean() {
   local feature_name="${1:-}"
-  [[ -n "$feature_name" ]] || { prompt_input "功能分支名称（不含 feature/ 前缀）" feature_name; }
+  [[ -n "$feature_name" ]] || { prompt_input "分支名称" feature_name; }
 
   load_conf
-  step "清理功能分支: feature/${feature_name}"
+  step "清理功能分支: ${feature_name}"
   echo "将删除："
-  echo "  - 本地分支:          feature/${feature_name}"
-  echo "  - relay remote 分支: relay/feature/${feature_name}"
-  echo "  - 服务器本地分支:    feature/${feature_name}（切回主分支）"
+  echo "  - 本地分支:          ${feature_name}"
+  echo "  - relay remote 分支: relay/${feature_name}"
+  echo "  - 服务器本地分支:    ${feature_name}（切回主分支）"
   echo
 
   confirm "确认清理？" || die "已取消"
 
-  local branch="feature/${feature_name}"
+  local branch="${feature_name}"
 
   # 本地删除
   if git branch --list "$branch" | grep -q "$branch"; then
