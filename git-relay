@@ -291,6 +291,14 @@ cmd_config() {
         if confirm "自动添加到 .gitignore？"; then
           echo '.git-relay.conf' >> "${repo_root}/.gitignore"
           success "已添加到 .gitignore"
+          # 立即提交，避免后续 git pull 因工作区修改而报错
+          if git -C "$repo_root" diff --quiet HEAD -- .gitignore 2>/dev/null; then
+            : # 无变化，跳过
+          else
+            git -C "$repo_root" add .gitignore
+            git -C "$repo_root" commit -m "chore: add .git-relay.conf to .gitignore"
+            success "已提交 .gitignore 变更"
+          fi
         fi
       fi
     fi
