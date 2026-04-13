@@ -163,7 +163,7 @@ load_conf() {
   RELAY_SSH_PORT="$(conf_get ssh_port 2>/dev/null || echo '')"
 
   # 可自定义的 remote 名称，默认 corp / relay
-  RELAY_CORP_REMOTE="$(conf_get corp_remote 2>/dev/null || echo 'corp')"
+  RELAY_CORP_REMOTE="$(conf_get corp_remote 2>/dev/null || echo 'origin')"
   RELAY_RELAY_REMOTE="$(conf_get relay_remote 2>/dev/null || echo 'relay')"
 
   # corp URL：优先从配置读取，其次从已有 remote 获取
@@ -320,7 +320,7 @@ cmd_config() {
   cur_port="$(conf_get ssh_port 2>/dev/null || echo '22')"
   cur_project="$(conf_get project_name 2>/dev/null || echo "${repo_root:+$(basename "$repo_root")}")"
   cur_branch="$(conf_get default_branch 2>/dev/null || echo 'main')"
-  cur_corp_remote="$(conf_get corp_remote 2>/dev/null || echo 'corp')"
+  cur_corp_remote="$(conf_get corp_remote 2>/dev/null || echo 'origin')"
   cur_relay_remote="$(conf_get relay_remote 2>/dev/null || echo 'relay')"
   cur_corp_url="$(conf_get corp_url 2>/dev/null || echo '')"
 
