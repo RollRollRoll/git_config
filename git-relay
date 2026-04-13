@@ -70,7 +70,7 @@ Git 多远程中转同步工具
   feature-merge <名称>  本地合并功能分支并推回公司仓库
   feature-clean <名称>  清理本地 + relay + 外网服务器的功能分支
 
-  sync-corp-to-relay   = push-to-relay + server-pull（一步完成同步到服务器）
+  sync-to-relay   = push-to-relay + server-pull（一步完成同步到服务器）
   sync-server-to-corp  = feature-push(server) + feature-pull + feature-merge（服务器提交同步回公司）
 
   status               显示本地远程状态和分支跟踪关系
@@ -92,7 +92,7 @@ Git 多远程中转同步工具
   git-relay init
 
   # 2. 每次开始远程开发前（同步公司最新到服务器）
-  git-relay sync-corp-to-relay
+  git-relay sync-to-relay
 
   # 3. 服务器上创建功能分支开发
   git-relay feature-start my-feature
@@ -624,7 +624,7 @@ cmd_server_pull() {
   success "服务器工作区已更新到最新主分支"
 }
 
-# sync-corp-to-relay — push-to-relay + server-pull 一步完成
+# sync-to-relay — push-to-relay + server-pull 一步完成
 cmd_sync_corp_to_relay() {
   load_conf
   step "全链路同步：公司仓库 → 本地 → relay → 服务器工作区"
@@ -891,7 +891,7 @@ main() {
     feature-pull)      shift; cmd_feature_pull "$@" ;;
     feature-merge)     shift; cmd_feature_merge "$@" ;;
     feature-clean)     shift; cmd_feature_clean "$@" ;;
-    sync-corp-to-relay)  shift; cmd_sync_corp_to_relay "$@" ;;
+    sync-to-relay)  shift; cmd_sync_corp_to_relay "$@" ;;
     sync-server-to-corp) shift; cmd_sync_server_to_corp "$@" ;;
     status)            shift; cmd_status "$@" ;;
     --help|-h|help)    show_help ;;

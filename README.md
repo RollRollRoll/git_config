@@ -511,7 +511,7 @@ git-relay init
 ### 开始远程开发前：同步公司最新代码到服务器
 
 ```bash
-git-relay sync-corp-to-relay
+git-relay sync-to-relay
 ```
 
 等价于：本地从 `corp_remote` 拉取 → 推送到 `relay_remote` → SSH 让服务器自动 pull。
@@ -577,7 +577,7 @@ git-relay feature-clean my-feature
 |---|---|
 | `git-relay push-to-relay` | 本地 → 推送主分支到 relay |
 | `git-relay server-pull` | 服务器 → 拉取主分支（SSH 执行） |
-| `git-relay sync-corp-to-relay` | 以上两步合一 |
+| `git-relay sync-to-relay` | 以上两步合一 |
 
 ### 功能分支类
 
