@@ -486,7 +486,8 @@ git-relay config
 `git-relay` 支持将中转仓库部署在 Windows Server 上，但前提是远端满足以下条件：
 
 - 已安装 Git for Windows
-- SSH 登录后可以直接执行 `bash`、`git`、`mkdir`
+- SSH 登录后的默认 shell 可以执行 `powershell`
+- `git-relay` 会优先使用 PATH 中的 `bash`，找不到时自动尝试 Git for Windows 的常见安装路径
 
 Windows Server 场景下，配置时请将 `server_os` 设为 `windows`。推荐配置示例：
 
@@ -509,6 +510,12 @@ Windows 模式下，以下路径输入形式都会被自动规范化为 Git Bash
 - `C:\relay\repos\my-app.git`
 - `C:/relay/repos/my-app.git`
 - `/c/relay/repos/my-app.git`
+
+脚本在远端执行 Bash 命令时会使用 `/c/...` 形式；但写入 Git `relay` remote URL 时，会自动转换为 Windows Git 能识别的 `C:/...` 形式。
+
+Windows 服务器若使用非默认 SSH 端口，请在 `~/.ssh/config` 中配置 `Host` 与 `Port`，并将 `ssh_port` 留空。不要依赖 `ssh://...:端口/...` 形式的 Windows 仓库 URL。
+
+如果 Git for Windows 安装在非默认路径，且 `bash` 也没有加入 PATH，请先手工补齐 PATH，或改用默认安装目录。
 
 ### 第二步：一次性初始化
 
@@ -671,6 +678,8 @@ default_branch=main
 
 - 裸仓库：`/c/relay/repos/<project_name>.git`
 - 工作区：`/c/relay/worktrees/<project_name>`
+
+对应生成的 Git `relay` remote URL 会自动改写为 `C:/relay/repos/<project_name>.git`，以适配 Windows Git over SSH。
 
 Linux 模式下，路径与默认值一致时不会写入配置文件，保持简洁；Windows 模式下会显式写入规范化后的路径，避免跨平台歧义。权限自动设为 `600`。
 

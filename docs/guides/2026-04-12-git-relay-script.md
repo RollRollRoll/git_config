@@ -62,11 +62,17 @@ git-relay config
 
 ### Windows Server 说明
 
-如果中转服务器是 Windows Server，请确保安装的是 Git for Windows，并且 SSH 登录后的默认环境可以直接执行 `bash`、`git`、`mkdir`。
+如果中转服务器是 Windows Server，请确保安装的是 Git for Windows，并且 SSH 登录后的默认 shell 可以执行 `powershell`。`git-relay` 会优先使用 PATH 中的 `bash`，找不到时自动尝试 Git for Windows 常见安装路径。
 
 推荐将路径写成 `/c/...` 形式；如果填写 `C:\...` 或 `C:/...`，`git-relay` 会在运行时自动转换为 `/c/...`。
 
+需要注意：`init-server`、`relay-pull` 这类远端 Bash 脚本继续使用 `/c/...` 路径；但写入 Git `relay` remote URL 时，脚本会自动转换为 `C:/...`，因为 Windows Git over SSH 识别 `C:/...`，不稳定识别 `/c/...`。
+
 Windows 模式下 `init-server` 不会执行 `chmod -R 700`，因为 Git for Windows 环境下该权限语义不稳定。
+
+如果 Git for Windows 安装在非默认路径，且 `bash` 也没有加入 PATH，请先手工补齐 PATH，或改用默认安装目录。
+
+如果 Windows 服务器使用非默认 SSH 端口，请在 `~/.ssh/config` 中配置 `Host` 与 `Port`，并将 `ssh_port` 留空，避免生成 `ssh://...:端口/...` 形式的 Windows 仓库 URL。
 
 ### 第二步：一次性初始化
 

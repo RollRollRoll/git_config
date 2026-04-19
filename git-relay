@@ -99,15 +99,43 @@ _default_server_paths() {
   fi
 }
 
+_build_git_transport_path() {
+  local server_os
+  server_os="$(_normalize_server_os "${1:-linux}")"
+  local repo_path="${2:-}"
+
+  if [[ "$server_os" == "windows" && "$repo_path" =~ ^/([A-Za-z])/(.*)$ ]]; then
+    local drive="${BASH_REMATCH[1]}"
+    local rest="${BASH_REMATCH[2]}"
+    drive="$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')"
+    printf '%s:/%s\n' "$drive" "$rest"
+    return
+  fi
+
+  printf '%s\n' "$repo_path"
+}
+
 _build_relay_remote_url() {
-  local ssh_target="$1"
-  local ssh_port="$2"
-  local bare_path="$3"
+  local server_os
+  server_os="$(_normalize_server_os "${1:-linux}")"
+  local ssh_target="$2"
+  local ssh_port="$3"
+  local bare_path="$4"
+  local transport_path
+  transport_path="$(_build_git_transport_path "$server_os" "$bare_path")"
+
+  if [[ "$server_os" == "windows" ]]; then
+    if [[ -n "$ssh_port" && "$ssh_port" != "22" ]]; then
+      die "Windows 服务器使用非默认 SSH 端口时，请在 ~/.ssh/config 中配置 Host/Port，并将 ssh_port 留空；当前显式端口 URL 不受支持"
+    fi
+    printf '%s:%s\n' "$ssh_target" "$transport_path"
+    return
+  fi
 
   if [[ -n "$ssh_port" && "$ssh_port" != "22" ]]; then
-    printf 'ssh://%s:%s%s\n' "$ssh_target" "$ssh_port" "$bare_path"
+    printf 'ssh://%s:%s%s\n' "$ssh_target" "$ssh_port" "$transport_path"
   else
-    printf '%s:%s\n' "$ssh_target" "$bare_path"
+    printf '%s:%s\n' "$ssh_target" "$transport_path"
   fi
 }
 
@@ -134,6 +162,86 @@ chmod -R 700 '$(dirname "$bare_path")'
 chmod -R 700 '$(dirname "$work_path")'
 EOF
   fi
+}
+
+_build_windows_bash_bridge_script() {
+  cat <<'EOF'
+$ProgressPreference = 'SilentlyContinue'
+$pathCommand = Get-Command bash -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$bash = $null
+
+if ($pathCommand) {
+  if ($pathCommand.Source) {
+    $bash = $pathCommand.Source
+  } elseif ($pathCommand.Path) {
+    $bash = $pathCommand.Path
+  }
+}
+
+if (-not $bash) {
+  $bashCandidates = @(
+    "$env:ProgramFiles\Git\bin\bash.exe",
+    "$env:ProgramFiles\Git\usr\bin\bash.exe",
+    "$env:ProgramW6432\Git\bin\bash.exe",
+    "$env:ProgramW6432\Git\usr\bin\bash.exe",
+    "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
+    "${env:ProgramFiles(x86)}\Git\usr\bin\bash.exe"
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+  foreach ($candidate in $bashCandidates) {
+    if (Test-Path $candidate) {
+      $bash = $candidate
+      break
+    }
+  }
+}
+
+if (-not $bash) {
+  Write-Error '未找到 bash.exe，请确认已安装 Git for Windows，或将 bash 加入 PATH。'
+  exit 127
+}
+
+$script = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrEmpty($script)) {
+  exit 0
+}
+
+$proc = New-Object System.Diagnostics.Process
+$proc.StartInfo.FileName = $bash
+$proc.StartInfo.Arguments = '-s'
+$proc.StartInfo.UseShellExecute = $false
+$proc.StartInfo.RedirectStandardInput = $true
+$proc.StartInfo.RedirectStandardOutput = $false
+$proc.StartInfo.RedirectStandardError = $false
+
+$null = $proc.Start()
+$proc.StandardInput.Write($script)
+$proc.StandardInput.Close()
+$proc.WaitForExit()
+exit $proc.ExitCode
+EOF
+}
+
+_encode_powershell_script_utf16le_base64() {
+  local script="$1"
+  command -v iconv >/dev/null 2>&1 || die "本地缺少 iconv，无法生成 PowerShell 编码命令"
+  command -v base64 >/dev/null 2>&1 || die "本地缺少 base64，无法生成 PowerShell 编码命令"
+  printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\r\n'
+}
+
+_build_remote_stdin_runner() {
+  local server_os
+  server_os="$(_normalize_server_os "${1:-linux}")"
+
+  if [[ "$server_os" == "windows" ]]; then
+    local ps_script encoded
+    ps_script="$(_build_windows_bash_bridge_script)"
+    encoded="$(_encode_powershell_script_utf16le_base64 "$ps_script")"
+    printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s\n' "$encoded"
+    return
+  fi
+
+  printf '%s\n' "bash"
 }
 
 # ── 颜色输出 ──────────────────────────────────────────────────────────────────
@@ -308,7 +416,7 @@ load_conf() {
   RELAY_BARE_PATH="$(_normalize_server_path "$RELAY_SERVER_OS" "${_custom_bare:-$_default_bare}")"
   RELAY_WORK_PATH="$(_normalize_server_path "$RELAY_SERVER_OS" "${_custom_work:-$_default_work}")"
 
-  RELAY_REMOTE_URL="$(_build_relay_remote_url "$RELAY_SSH_TARGET" "$RELAY_SSH_PORT" "$RELAY_BARE_PATH")"
+  RELAY_REMOTE_URL="$(_build_relay_remote_url "$RELAY_SERVER_OS" "$RELAY_SSH_TARGET" "$RELAY_SSH_PORT" "$RELAY_BARE_PATH")"
 }
 
 # ── 输入工具 ──────────────────────────────────────────────────────────────────
@@ -358,12 +466,14 @@ confirm() {
 ssh_run() {
   local cmd="$1"
   local ssh_opts="-o StrictHostKeyChecking=accept-new"
+  local remote_runner
   # 仅在显式配置了非标端口时才加 -p（标准端口 22 或依赖 SSH config 时均不加）
   if [[ -n "$RELAY_SSH_PORT" && "$RELAY_SSH_PORT" != "22" ]]; then
     ssh_opts="${ssh_opts} -p ${RELAY_SSH_PORT}"
   fi
+  remote_runner="$(_build_remote_stdin_runner "${RELAY_SERVER_OS:-linux}")"
   # shellcheck disable=SC2086
-  echo "$cmd" | ssh $ssh_opts "$RELAY_SSH_TARGET" bash
+  printf '%s\n' "$cmd" | ssh $ssh_opts "$RELAY_SSH_TARGET" "$remote_runner"
 }
 
 # ── 子命令实现 ────────────────────────────────────────────────────────────────
@@ -1054,8 +1164,10 @@ EOF
       ;;
     _normalize_server_path) shift; _normalize_server_path "${1:-linux}" "${2:-}" ;;
     _default_server_paths) shift; _default_server_paths "${1:-linux}" "${2:-}" "${3:-}" ;;
-    _build_relay_remote_url) shift; _build_relay_remote_url "${1:-}" "${2:-}" "${3:-}" ;;
+    _build_relay_remote_url) shift; _build_relay_remote_url "${1:-linux}" "${2:-}" "${3:-}" "${4:-}" ;;
     _build_init_server_script) shift; _build_init_server_script "${1:-linux}" "${2:-}" "${3:-}" "${4:-main}" ;;
+    _build_windows_bash_bridge_script) shift; _build_windows_bash_bridge_script ;;
+    _build_remote_stdin_runner) shift; _build_remote_stdin_runner "${1:-linux}" ;;
     config)            shift; cmd_config "$@" ;;
     config-show)       shift; cmd_config_show "$@" ;;
     init)              shift; cmd_init "$@" ;;
