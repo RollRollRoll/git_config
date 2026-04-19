@@ -466,6 +466,7 @@ git-relay config
 | 参数 | 说明 | 默认值 / 示例 |
 |---|---|---|
 | `server_host` | 外网服务器地址或 SSH Host 别名 | `1.2.3.4` 或 `relay-server` |
+| `server_os` | 服务器操作系统 | `linux` 或 `windows` |
 | `server_user` | 外网服务器用户名（**可选**，SSH config 中有则留空） | `gitrelay` |
 | `ssh_port` | SSH 端口（**可选**，SSH config 中有则留空） | `2222` |
 | `project_name` | 项目名（默认预填目录名） | `my-app` |
@@ -479,6 +480,35 @@ git-relay config
 **`corp_url` 的两种填写方式**：
 - 选择已有 remote — 列出当前仓库所有 remote，选一个即可，URL 自动读取
 - 手动输入 — 若 `corp_remote` 对应的 remote 已存在且 URL 一致，也可不单独存储 `corp_url`
+
+### Windows Server 支持
+
+`git-relay` 支持将中转仓库部署在 Windows Server 上，但前提是远端满足以下条件：
+
+- 已安装 Git for Windows
+- SSH 登录后可以直接执行 `bash`、`git`、`mkdir`
+
+Windows Server 场景下，配置时请将 `server_os` 设为 `windows`。推荐配置示例：
+
+```ini
+server_host=relay-win
+server_os=windows
+server_user=gitrelay
+ssh_port=22
+project_name=my-app
+default_branch=main
+corp_remote=origin
+relay_remote=relay
+corp_url=git@corp.example.com:team/my-app.git
+server_bare_path=/c/relay/repos/my-app.git
+server_work_path=/c/relay/worktrees/my-app
+```
+
+Windows 模式下，以下路径输入形式都会被自动规范化为 Git Bash 风格路径：
+
+- `C:\relay\repos\my-app.git`
+- `C:/relay/repos/my-app.git`
+- `/c/relay/repos/my-app.git`
 
 ### 第二步：一次性初始化
 
@@ -613,6 +643,7 @@ git-relay feature-clean my-feature
 
 ```ini
 server_host=1.2.3.4
+server_os=linux
 server_user=gitrelay
 ssh_port=22
 project_name=my-app
@@ -636,7 +667,12 @@ default_branch=main
 - 裸仓库：`/home/<server_user>/relay/repos/<project_name>.git`
 - 工作区：`/home/<server_user>/relay/worktrees/<project_name>`
 
-路径与默认值一致时不会写入配置文件，保持简洁。权限自动设为 `600`。
+当 `server_os=windows` 时，默认路径改为：
+
+- 裸仓库：`/c/relay/repos/<project_name>.git`
+- 工作区：`/c/relay/worktrees/<project_name>`
+
+Linux 模式下，路径与默认值一致时不会写入配置文件，保持简洁；Windows 模式下会显式写入规范化后的路径，避免跨平台歧义。权限自动设为 `600`。
 
 ### 多项目管理
 

@@ -31,6 +31,111 @@ _resolve_conf_file() {
 CONF_FILE_ORIG_ENV="${CONF_FILE:-}"
 CONF_FILE="$(_resolve_conf_file)"
 
+# ── 平台辅助函数 ──────────────────────────────────────────────────────────────
+
+_normalize_server_os() {
+  local raw="${1:-linux}"
+  local normalized
+  normalized="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$normalized" in
+    ""|linux)
+      printf '%s\n' "linux"
+      ;;
+    windows)
+      printf '%s\n' "windows"
+      ;;
+    *)
+      die "server_os 只支持 linux 或 windows，当前值: ${raw}"
+      ;;
+  esac
+}
+
+_normalize_server_path() {
+  local server_os
+  server_os="$(_normalize_server_os "${1:-linux}")"
+  local raw_path="${2:-}"
+
+  if [[ "$server_os" != "windows" ]]; then
+    printf '%s\n' "$raw_path"
+    return
+  fi
+
+  raw_path="${raw_path//\\//}"
+
+  if [[ "$raw_path" =~ ^([A-Za-z]):/(.*)$ ]]; then
+    local drive="${BASH_REMATCH[1]}"
+    local rest="${BASH_REMATCH[2]}"
+    drive="$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')"
+    printf '/%s/%s\n' "$drive" "$rest"
+    return
+  fi
+
+  if [[ "$raw_path" =~ ^/([A-Za-z])/(.*)$ ]]; then
+    local drive="${BASH_REMATCH[1]}"
+    local rest="${BASH_REMATCH[2]}"
+    drive="$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')"
+    printf '/%s/%s\n' "$drive" "$rest"
+    return
+  fi
+
+  printf '%s\n' "$raw_path"
+}
+
+_default_server_paths() {
+  local server_os
+  server_os="$(_normalize_server_os "${1:-linux}")"
+  local server_user="${2:-}"
+  local project_name="$3"
+
+  if [[ "$server_os" == "windows" ]]; then
+    printf 'BARE=/c/relay/repos/%s.git\n' "$project_name"
+    printf 'WORK=/c/relay/worktrees/%s\n' "$project_name"
+    return
+  fi
+
+  if [[ -n "$server_user" ]]; then
+    printf 'BARE=/home/%s/relay/repos/%s.git\n' "$server_user" "$project_name"
+    printf 'WORK=/home/%s/relay/worktrees/%s\n' "$server_user" "$project_name"
+  fi
+}
+
+_build_relay_remote_url() {
+  local ssh_target="$1"
+  local ssh_port="$2"
+  local bare_path="$3"
+
+  if [[ -n "$ssh_port" && "$ssh_port" != "22" ]]; then
+    printf 'ssh://%s:%s%s\n' "$ssh_target" "$ssh_port" "$bare_path"
+  else
+    printf '%s:%s\n' "$ssh_target" "$bare_path"
+  fi
+}
+
+_build_init_server_script() {
+  local server_os
+  server_os="$(_normalize_server_os "$1")"
+  local bare_path="$2"
+  local work_path="$3"
+  local branch="$4"
+
+  cat <<EOF
+set -e
+mkdir -p '$(dirname "$bare_path")'
+mkdir -p '$(dirname "$work_path")'
+git init --bare '$bare_path'
+git --git-dir='$bare_path' config receive.denyNonFastForwards true
+git --git-dir='$bare_path' config core.logAllRefUpdates true
+git --git-dir='$bare_path' symbolic-ref HEAD 'refs/heads/$branch'
+EOF
+
+  if [[ "$server_os" == "linux" ]]; then
+    cat <<EOF
+chmod -R 700 '$(dirname "$bare_path")'
+chmod -R 700 '$(dirname "$work_path")'
+EOF
+  fi
+}
+
 # ── 颜色输出 ──────────────────────────────────────────────────────────────────
 _c_reset='\033[0m'
 _c_bold='\033[1m'
@@ -155,6 +260,7 @@ conf_set() {
 load_conf() {
   [[ -f "$CONF_FILE" ]] || die "未找到配置文件 ${CONF_FILE}，请先运行: git-relay config"
 
+  RELAY_SERVER_OS="$(_normalize_server_os "$(conf_get server_os 2>/dev/null || echo 'linux')")"
   # server_user / ssh_port 为可选项，不填时依赖 ~/.ssh/config 中的 Host 别名
   RELAY_SERVER_USER="$(conf_get server_user 2>/dev/null || echo '')"
   RELAY_SERVER_HOST="$(conf_get server_host 2>/dev/null)" || die "配置缺少 server_host，请重新运行: git-relay config"
@@ -183,27 +289,26 @@ load_conf() {
   _custom_bare="$(conf_get server_bare_path 2>/dev/null || echo '')"
   _custom_work="$(conf_get server_work_path 2>/dev/null || echo '')"
 
-  if [[ -n "$_custom_bare" && -n "$_custom_work" ]]; then
-    RELAY_BARE_PATH="$_custom_bare"
-    RELAY_WORK_PATH="$_custom_work"
-  else
-    # 需要用户名来派生默认路径
+  local _default_bare="" _default_work=""
+  if [[ "$RELAY_SERVER_OS" == "windows" ]]; then
+    _default_bare="/c/relay/repos/${RELAY_PROJECT}.git"
+    _default_work="/c/relay/worktrees/${RELAY_PROJECT}"
+  elif [[ -z "$_custom_bare" || -z "$_custom_work" ]]; then
+    # Linux 模式缺少自定义路径时，仍然按原有逻辑用用户名派生默认路径
     local _path_user="$RELAY_SERVER_USER"
     if [[ -z "$_path_user" ]]; then
       info "server_user 未配置，正在通过 SSH 解析服务器用户名..."
       _path_user="$(ssh "$RELAY_SSH_TARGET" 'whoami' 2>/dev/null)" || \
         die "无法获取服务器用户名，请配置 server_user 或显式指定 server_bare_path / server_work_path"
     fi
-    RELAY_BARE_PATH="${_custom_bare:-/home/${_path_user}/relay/repos/${RELAY_PROJECT}.git}"
-    RELAY_WORK_PATH="${_custom_work:-/home/${_path_user}/relay/worktrees/${RELAY_PROJECT}}"
+    _default_bare="/home/${_path_user}/relay/repos/${RELAY_PROJECT}.git"
+    _default_work="/home/${_path_user}/relay/worktrees/${RELAY_PROJECT}"
   fi
 
-  # relay remote URL：有非标端口则用 ssh:// 格式，否则用 scp 格式
-  if [[ -n "$RELAY_SSH_PORT" && "$RELAY_SSH_PORT" != "22" ]]; then
-    RELAY_REMOTE_URL="ssh://${RELAY_SSH_TARGET}:${RELAY_SSH_PORT}${RELAY_BARE_PATH}"
-  else
-    RELAY_REMOTE_URL="${RELAY_SSH_TARGET}:${RELAY_BARE_PATH}"
-  fi
+  RELAY_BARE_PATH="$(_normalize_server_path "$RELAY_SERVER_OS" "${_custom_bare:-$_default_bare}")"
+  RELAY_WORK_PATH="$(_normalize_server_path "$RELAY_SERVER_OS" "${_custom_work:-$_default_work}")"
+
+  RELAY_REMOTE_URL="$(_build_relay_remote_url "$RELAY_SSH_TARGET" "$RELAY_SSH_PORT" "$RELAY_BARE_PATH")"
 }
 
 # ── 输入工具 ──────────────────────────────────────────────────────────────────
@@ -312,11 +417,12 @@ cmd_config() {
   echo "请输入以下信息（已有值直接回车保留）："
   echo
 
-  local cur_user cur_host cur_port cur_project cur_branch
+  local cur_user cur_host cur_os cur_port cur_project cur_branch
   local cur_corp_remote cur_relay_remote cur_corp_url
 
   cur_user="$(conf_get server_user 2>/dev/null || echo '')"
   cur_host="$(conf_get server_host 2>/dev/null || echo '')"
+  cur_os="$(_normalize_server_os "$(conf_get server_os 2>/dev/null || echo 'linux')")"
   cur_port="$(conf_get ssh_port 2>/dev/null || echo '22')"
   cur_project="$(conf_get project_name 2>/dev/null || echo "${repo_root:+$(basename "$repo_root")}")"
   cur_branch="$(conf_get default_branch 2>/dev/null || echo 'main')"
@@ -324,10 +430,12 @@ cmd_config() {
   cur_relay_remote="$(conf_get relay_remote 2>/dev/null || echo 'relay')"
   cur_corp_url="$(conf_get corp_url 2>/dev/null || echo '')"
 
-  local v_user v_host v_port v_project v_branch v_corp_remote v_relay_remote v_corp_url
+  local v_user v_host v_os v_port v_project v_branch v_corp_remote v_relay_remote v_corp_url
   local v_bare_path v_work_path
 
   prompt_input          "外网服务器地址/别名 (server_host)"              v_host "$cur_host"
+  prompt_input          "服务器操作系统 (server_os: linux/windows)"     v_os "$cur_os"
+  v_os="$(_normalize_server_os "$v_os")"
   prompt_input_optional "外网服务器用户名 (server_user，SSH config 中有则留空)" v_user "$cur_user"
   prompt_input_optional "SSH 端口 (ssh_port，SSH config 中有则留空)"          v_port "$cur_port"
   prompt_input "项目名 (project_name)"             v_project      "$cur_project"
@@ -336,11 +444,17 @@ cmd_config() {
   prompt_input "中转仓库 remote 名 (relay_remote)" v_relay_remote "$cur_relay_remote"
 
   # 服务器路径：计算默认值供展示，允许用户覆盖
-  local _def_bare="/home/${v_user}/relay/repos/${v_project}.git"
-  local _def_work="/home/${v_user}/relay/worktrees/${v_project}"
+  local _def_bare="" _def_work=""
+  if [[ "$v_os" == "windows" ]]; then
+    _def_bare="/c/relay/repos/${v_project}.git"
+    _def_work="/c/relay/worktrees/${v_project}"
+  else
+    _def_bare="/home/${v_user}/relay/repos/${v_project}.git"
+    _def_work="/home/${v_user}/relay/worktrees/${v_project}"
+  fi
   local cur_bare cur_work
-  cur_bare="$(conf_get server_bare_path 2>/dev/null || echo "$_def_bare")"
-  cur_work="$(conf_get server_work_path 2>/dev/null || echo "$_def_work")"
+  cur_bare="$(_normalize_server_path "$v_os" "$(conf_get server_bare_path 2>/dev/null || echo "$_def_bare")")"
+  cur_work="$(_normalize_server_path "$v_os" "$(conf_get server_work_path 2>/dev/null || echo "$_def_work")")"
   echo
   info "服务器路径（直接回车使用默认值）："
   prompt_input "裸仓库路径 (server_bare_path)" v_bare_path "$cur_bare"
@@ -389,6 +503,7 @@ cmd_config() {
   fi
 
   conf_set server_host    "$v_host"
+  conf_set server_os      "$v_os"
   conf_set project_name   "$v_project"
   conf_set default_branch "$v_branch"
   conf_set corp_remote    "$v_corp_remote"
@@ -403,15 +518,21 @@ cmd_config() {
   if [[ -n "$v_corp_url" ]]; then
     conf_set corp_url "$v_corp_url"
   fi
-  # 路径只在与默认值不同时写入（保持配置文件简洁）
-  # server_user 可能为空，路径默认值用运行时解析的值，这里仅做保存判断
-  local _save_def_bare="/home/${v_user}/relay/repos/${v_project}.git"
-  local _save_def_work="/home/${v_user}/relay/worktrees/${v_project}"
-  if [[ "$v_bare_path" != "$_save_def_bare" ]]; then
+  v_bare_path="$(_normalize_server_path "$v_os" "$v_bare_path")"
+  v_work_path="$(_normalize_server_path "$v_os" "$v_work_path")"
+  if [[ "$v_os" == "windows" ]]; then
     conf_set server_bare_path "$v_bare_path"
-  fi
-  if [[ "$v_work_path" != "$_save_def_work" ]]; then
     conf_set server_work_path "$v_work_path"
+  else
+    # Linux 保持原有行为：默认路径不额外写入配置文件
+    local _save_def_bare="/home/${v_user}/relay/repos/${v_project}.git"
+    local _save_def_work="/home/${v_user}/relay/worktrees/${v_project}"
+    if [[ "$v_bare_path" != "$_save_def_bare" ]]; then
+      conf_set server_bare_path "$v_bare_path"
+    fi
+    if [[ "$v_work_path" != "$_save_def_work" ]]; then
+      conf_set server_work_path "$v_work_path"
+    fi
   fi
 
   # 使后续命令在本次进程内也用新配置
@@ -444,7 +565,7 @@ cmd_config_show() {
 cmd_init_server() {
   load_conf
   step "在外网服务器上初始化裸仓库"
-  info "服务器: ${RELAY_SERVER_USER}@${RELAY_SERVER_HOST}"
+  info "服务器: ${RELAY_SSH_TARGET}"
   info "裸仓库: ${RELAY_BARE_PATH}"
   info "工作区: ${RELAY_WORK_PATH}"
   echo
@@ -457,17 +578,7 @@ cmd_init_server() {
     confirm "是否跳过创建，直接继续？" || die "已取消"
   else
     info "创建目录并初始化裸仓库..."
-    ssh_run "
-      set -e
-      mkdir -p '$(dirname "${RELAY_BARE_PATH}")'
-      mkdir -p '$(dirname "${RELAY_WORK_PATH}")'
-      git init --bare '${RELAY_BARE_PATH}'
-      git --git-dir='${RELAY_BARE_PATH}' config receive.denyNonFastForwards true
-      git --git-dir='${RELAY_BARE_PATH}' config core.logAllRefUpdates true
-      git --git-dir='${RELAY_BARE_PATH}' symbolic-ref HEAD 'refs/heads/${RELAY_BRANCH}'
-      chmod -R 700 '$(dirname "${RELAY_BARE_PATH}")'
-      chmod -R 700 '$(dirname "${RELAY_WORK_PATH}")'
-    "
+    ssh_run "$(_build_init_server_script "$RELAY_SERVER_OS" "$RELAY_BARE_PATH" "$RELAY_WORK_PATH" "$RELAY_BRANCH")"
     success "裸仓库创建完成"
   fi
 
@@ -931,6 +1042,20 @@ main() {
   local cmd="${1:-}"
 
   case "$cmd" in
+    _dump_loaded_conf)
+      shift
+      load_conf
+      cat <<EOF
+RELAY_SERVER_OS=${RELAY_SERVER_OS}
+RELAY_BARE_PATH=${RELAY_BARE_PATH}
+RELAY_WORK_PATH=${RELAY_WORK_PATH}
+RELAY_REMOTE_URL=${RELAY_REMOTE_URL}
+EOF
+      ;;
+    _normalize_server_path) shift; _normalize_server_path "${1:-linux}" "${2:-}" ;;
+    _default_server_paths) shift; _default_server_paths "${1:-linux}" "${2:-}" "${3:-}" ;;
+    _build_relay_remote_url) shift; _build_relay_remote_url "${1:-}" "${2:-}" "${3:-}" ;;
+    _build_init_server_script) shift; _build_init_server_script "${1:-linux}" "${2:-}" "${3:-}" "${4:-main}" ;;
     config)            shift; cmd_config "$@" ;;
     config-show)       shift; cmd_config_show "$@" ;;
     init)              shift; cmd_init "$@" ;;

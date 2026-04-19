@@ -52,12 +52,21 @@ git-relay config
 
 | 参数 | 说明 | 示例 |
 |---|---|---|
+| `server_os` | 服务器操作系统，`linux` 或 `windows` | `windows` |
 | `server_user` | 外网服务器用户名 | `gitrelay` |
 | `server_host` | 外网服务器地址 | `1.2.3.4` |
 | `ssh_port` | SSH 端口（默认 22） | `22` |
 | `project_name` | 项目名 | `my-app` |
 | `default_branch` | 默认分支 | `main` |
 | `corp_url` | 公司 Git 仓库地址 | `git@corp.example.com:team/my-app.git` |
+
+### Windows Server 说明
+
+如果中转服务器是 Windows Server，请确保安装的是 Git for Windows，并且 SSH 登录后的默认环境可以直接执行 `bash`、`git`、`mkdir`。
+
+推荐将路径写成 `/c/...` 形式；如果填写 `C:\...` 或 `C:/...`，`git-relay` 会在运行时自动转换为 `/c/...`。
+
+Windows 模式下 `init-server` 不会执行 `chmod -R 700`，因为 Git for Windows 环境下该权限语义不稳定。
 
 ### 第二步：一次性初始化
 
@@ -229,12 +238,21 @@ git-relay --version       # 显示版本
 配置保存在 `~/.git-relay.conf`，格式为 `key=value`，示例：
 
 ```ini
+server_os=linux
 server_user=gitrelay
 server_host=1.2.3.4
 ssh_port=22
 project_name=my-app
 default_branch=main
 corp_url=git@corp.example.com:team/my-app.git
+```
+
+若服务器是 Windows Server，推荐写成：
+
+```ini
+server_os=windows
+server_bare_path=/c/relay/repos/my-app.git
+server_work_path=/c/relay/worktrees/my-app
 ```
 
 权限自动设置为 `600`（仅当前用户可读）。
