@@ -167,30 +167,32 @@ EOF
 _build_windows_bash_bridge_script() {
   cat <<'EOF'
 $ProgressPreference = 'SilentlyContinue'
-$pathCommand = Get-Command bash -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $bash = $null
 
-if ($pathCommand) {
-  if ($pathCommand.Source) {
-    $bash = $pathCommand.Source
-  } elseif ($pathCommand.Path) {
-    $bash = $pathCommand.Path
+# 优先查找 Git for Windows 的 bash.exe，避免命中 WSL 的 bash 代理
+$bashCandidates = @(
+  "$env:ProgramFiles\Git\bin\bash.exe",
+  "$env:ProgramFiles\Git\usr\bin\bash.exe",
+  "$env:ProgramW6432\Git\bin\bash.exe",
+  "$env:ProgramW6432\Git\usr\bin\bash.exe",
+  "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
+  "${env:ProgramFiles(x86)}\Git\usr\bin\bash.exe"
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+foreach ($candidate in $bashCandidates) {
+  if (Test-Path $candidate) {
+    $bash = $candidate
+    break
   }
 }
 
+# 兜底：通过 PATH 查找，但排除 System32 下的 WSL 代理
 if (-not $bash) {
-  $bashCandidates = @(
-    "$env:ProgramFiles\Git\bin\bash.exe",
-    "$env:ProgramFiles\Git\usr\bin\bash.exe",
-    "$env:ProgramW6432\Git\bin\bash.exe",
-    "$env:ProgramW6432\Git\usr\bin\bash.exe",
-    "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
-    "${env:ProgramFiles(x86)}\Git\usr\bin\bash.exe"
-  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-
-  foreach ($candidate in $bashCandidates) {
-    if (Test-Path $candidate) {
-      $bash = $candidate
+  $pathCommands = Get-Command bash -CommandType Application -All -ErrorAction SilentlyContinue
+  foreach ($c in $pathCommands) {
+    $src = if ($c.Source) { $c.Source } else { $c.Path }
+    if ($src -and $src -notmatch '\\System32\\' -and $src -notmatch '\\WindowsApps\\') {
+      $bash = $src
       break
     }
   }
@@ -649,6 +651,23 @@ cmd_config() {
   CONF_FILE="$save_target"
 
   success "配置已保存至 ${CONF_FILE}"
+
+  # 若 relay remote 已存在且 URL 与新配置不一致，自动更新
+  if git rev-parse --git-dir &>/dev/null 2>&1; then
+    local _new_ssh_target
+    [[ -n "$v_user" ]] && _new_ssh_target="${v_user}@${v_host}" || _new_ssh_target="$v_host"
+    local _new_relay_url
+    _new_relay_url="$(_build_relay_remote_url "$v_os" "$_new_ssh_target" "$v_port" "$v_bare_path")"
+    if git remote | grep -q "^${v_relay_remote}$"; then
+      local _cur_relay_url
+      _cur_relay_url="$(git remote get-url "$v_relay_remote")"
+      if [[ "$_cur_relay_url" != "$_new_relay_url" ]]; then
+        git remote set-url "$v_relay_remote" "$_new_relay_url"
+        success "已更新 ${v_relay_remote} remote URL: ${_new_relay_url}"
+      fi
+    fi
+  fi
+
   echo
   cmd_config_show
 }

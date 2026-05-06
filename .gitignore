@@ -3,3 +3,4 @@
 .worktrees/
 .docs/plans/
 .docs/superpowers/
+.git-relay.conf
