@@ -208,19 +208,22 @@ if ([string]::IsNullOrEmpty($script)) {
   exit 0
 }
 
-$proc = New-Object System.Diagnostics.Process
-$proc.StartInfo.FileName = $bash
-$proc.StartInfo.Arguments = '-s'
-$proc.StartInfo.UseShellExecute = $false
-$proc.StartInfo.RedirectStandardInput = $true
-$proc.StartInfo.RedirectStandardOutput = $false
-$proc.StartInfo.RedirectStandardError = $false
+# 脚本写到临时 .sh 文件后由 bash 读取执行：
+# - 避免 stdin 编码/CRLF/MSYS 转换带来的 "line 1: [: command not found" 之类问题
+# - UTF-8 无 BOM，显式 LF 结尾
+$tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.Guid]::NewGuid().ToString('N') + '.sh')
+$script = $script -replace "`r`n", "`n"
+if (-not $script.EndsWith("`n")) { $script += "`n" }
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($tmp, $script, $utf8NoBom)
 
-$null = $proc.Start()
-$proc.StandardInput.Write($script)
-$proc.StandardInput.Close()
-$proc.WaitForExit()
-exit $proc.ExitCode
+try {
+  $bashPath = $tmp -replace '\\', '/'
+  & $bash $bashPath
+  exit $LASTEXITCODE
+} finally {
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+}
 EOF
 }
 
