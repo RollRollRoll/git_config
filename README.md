@@ -437,11 +437,18 @@ git config --global --unset alias.profile  # 删除 git 别名
 原始仓库 (corp)  ↔  本地工作仓库  ↔  外网裸仓库 (relay)  ↔  外网服务器工作区
 ```
 
+也支持**纯本地项目**（没有原始仓库），直接将本地代码推送到外网服务器：
+
+```
+本地工作仓库  →  外网裸仓库 (relay)  ↔  外网服务器工作区
+```
+
 **核心约束**：
 
 - 本地是唯一能同时连接 `corp` 和 `relay` 的节点
 - 外网服务器只与裸仓库通信，不配置 `corp` remote
 - 所有回流原始仓库的操作只能在本地执行
+- 纯本地项目无需配置 `corp_url`，`config` 时留空即可
 
 ## 快速开始
 
@@ -473,13 +480,14 @@ git-relay config
 | `default_branch` | 默认分支 | `main` |
 | `corp_remote` | 原始仓库 remote 名 | `corp` |
 | `relay_remote` | 中转仓库 remote 名 | `relay` |
-| `corp_url` | 原始仓库 URL（可选择已有 remote 代替手动输入） | `git@corp.example.com:team/my-app.git` |
+| `corp_url` | 原始仓库 URL（可选择已有 remote 代替手动输入，**纯本地项目可留空**） | `git@corp.example.com:team/my-app.git` |
 | `server_bare_path` | 服务器裸仓库路径（可选，有默认值） | `/data/repos/my-app.git` |
 | `server_work_path` | 服务器工作区路径（可选，有默认值） | `/data/worktrees/my-app` |
 
 **`corp_url` 的两种填写方式**：
 - 选择已有 remote — 列出当前仓库所有 remote，选一个即可，URL 自动读取
 - 手动输入 — 若 `corp_remote` 对应的 remote 已存在且 URL 一致，也可不单独存储 `corp_url`
+- **留空** — 纯本地项目无原始仓库时直接回车跳过
 
 ### Windows Server 支持
 
@@ -542,6 +550,24 @@ git-relay init
 └── worktrees/
     └── <project_name>       # 工作区（开发节点）
 ```
+
+### 纯本地项目（无原始仓库）
+
+如果项目是本地新建的，没有公司/远程 Git 仓库：
+
+```bash
+# 1. 配置（corp_url 直接回车留空）
+git-relay config
+
+# 2. 初始化（自动跳过 origin remote 设置）
+git-relay init
+
+# 3. 日常推送
+git-relay push-to-relay       # 仅推到 relay 裸仓库
+git-relay sync-to-relay       # 推到 relay 并让服务器工作区同步
+```
+
+`push-to-relay` 和 `init` 在检测不到原始仓库 remote 时，会自动跳过 `fetch`/`pull` 步骤，直接推送本地代码。
 
 ## 日常工作流
 
@@ -618,7 +644,7 @@ git-relay feature-clean my-feature
 
 | 命令 | 功能 |
 |---|---|
-| `git-relay push-to-relay` | 本地 → 推送主分支到 relay |
+| `git-relay push-to-relay` | 本地 → 推送主分支到 relay（无原始仓库时跳过 fetch/pull） |
 | `git-relay relay-pull [分支名]` | 服务器 → 拉取指定分支（默认主分支，SSH 执行） |
 | `git-relay sync-to-relay` | 以上两步合一 |
 
@@ -667,6 +693,21 @@ server_host=relay-server   # 对应 ~/.ssh/config 中的 Host 别名
 project_name=my-app
 default_branch=main
 ```
+
+**纯本地项目（无原始仓库）的配置：**
+
+```ini
+server_host=relay-server
+server_os=windows
+project_name=my-app
+default_branch=main
+corp_remote=origin
+relay_remote=relay
+server_bare_path=/c/Users/Administrator/WorkSpace/repos/my-app.git
+server_work_path=/c/Users/Administrator/WorkSpace/project/my-app
+```
+
+无需配置 `corp_url`，`push-to-relay` 和 `init` 会自动检测并跳过原始仓库相关操作。
 
 `server_user` 和 `ssh_port` 留空时，SSH 连接和 git remote URL 均直接使用 `server_host`，由 `~/.ssh/config` 中的别名提供用户名和端口。若同时省略了 `server_bare_path` / `server_work_path`，脚本会通过一次 `whoami` SSH 调用解析远端用户名来派生默认路径。
 

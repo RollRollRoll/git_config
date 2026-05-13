@@ -385,9 +385,8 @@ load_conf() {
   RELAY_CORP_REMOTE="$(conf_get corp_remote 2>/dev/null || echo 'origin')"
   RELAY_RELAY_REMOTE="$(conf_get relay_remote 2>/dev/null || echo 'relay')"
 
-  # corp URL：优先从配置读取，其次从已有 remote 获取
+  # corp URL：优先从配置读取，其次从已有 remote 获取（允许为空，表示纯本地项目）
   RELAY_CORP_URL="$(conf_get corp_url 2>/dev/null || git remote get-url "$RELAY_CORP_REMOTE" 2>/dev/null || echo '')"
-  [[ -n "$RELAY_CORP_URL" ]] || die "无法确定原始仓库 URL，请重新运行: git-relay config"
 
   # SSH 连接目标：有 server_user 则用 user@host，否则直接用 host（依赖 SSH config）
   if [[ -n "$RELAY_SERVER_USER" ]]; then
@@ -577,6 +576,7 @@ cmd_config() {
 
   # ── 原始仓库 URL：选择已有 remote 或手动输入 ────────────────────────────
   local v_corp_url=""
+  local url_choice=""
   local existing_remotes=()
   if git rev-parse --git-dir &>/dev/null 2>&1; then
     while IFS= read -r r; do
@@ -613,8 +613,8 @@ cmd_config() {
     fi
   fi
 
-  if [[ -z "$v_corp_url" && "$url_choice" == "0" ]]; then
-    prompt_input "原始仓库 URL (corp_url)" v_corp_url "$cur_corp_url"
+  if [[ -z "$v_corp_url" ]] && [[ "$url_choice" == "0" || -z "$url_choice" ]]; then
+    prompt_input_optional "原始仓库 URL (corp_url，无则留空)" v_corp_url "$cur_corp_url"
   fi
 
   conf_set server_host    "$v_host"
@@ -732,26 +732,29 @@ cmd_init_local() {
   # 确保在 git 仓库中
   git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库，请先 cd 到项目目录"
 
-  # 检查 corp remote
-  if git remote | grep -q "^${RELAY_CORP_REMOTE}$"; then
-    info "${RELAY_CORP_REMOTE} remote 已存在：$(git remote get-url "${RELAY_CORP_REMOTE}")"
-  else
-    # 检查是否有 origin，若有则建议改名
-    if git remote | grep -q "^origin$"; then
-      local origin_url
-      origin_url="$(git remote get-url origin)"
-      warn "检测到 origin remote: ${origin_url}"
-      if confirm "是否将 origin 重命名为 ${RELAY_CORP_REMOTE}？"; then
-        git remote rename origin "$RELAY_CORP_REMOTE"
-        success "已将 origin 重命名为 ${RELAY_CORP_REMOTE}"
+  # 检查 corp remote（纯本地项目无 corp URL 则跳过）
+  if [[ -n "$RELAY_CORP_URL" ]]; then
+    if git remote | grep -q "^${RELAY_CORP_REMOTE}$"; then
+      info "${RELAY_CORP_REMOTE} remote 已存在：$(git remote get-url "${RELAY_CORP_REMOTE}")"
+    else
+      if git remote | grep -q "^origin$"; then
+        local origin_url
+        origin_url="$(git remote get-url origin)"
+        warn "检测到 origin remote: ${origin_url}"
+        if confirm "是否将 origin 重命名为 ${RELAY_CORP_REMOTE}？"; then
+          git remote rename origin "$RELAY_CORP_REMOTE"
+          success "已将 origin 重命名为 ${RELAY_CORP_REMOTE}"
+        else
+          git remote add "$RELAY_CORP_REMOTE" "$RELAY_CORP_URL"
+          success "已添加 ${RELAY_CORP_REMOTE} remote: ${RELAY_CORP_URL}"
+        fi
       else
         git remote add "$RELAY_CORP_REMOTE" "$RELAY_CORP_URL"
         success "已添加 ${RELAY_CORP_REMOTE} remote: ${RELAY_CORP_URL}"
       fi
-    else
-      git remote add "$RELAY_CORP_REMOTE" "$RELAY_CORP_URL"
-      success "已添加 ${RELAY_CORP_REMOTE} remote: ${RELAY_CORP_URL}"
     fi
+  else
+    info "未配置原始仓库 URL，跳过 ${RELAY_CORP_REMOTE} remote 设置"
   fi
 
   # 检查 relay remote
@@ -781,10 +784,14 @@ cmd_init_local() {
   # 首次推送
   echo
   if confirm "是否立即将主分支首次推送到 ${RELAY_RELAY_REMOTE}？"; then
-    info "正在从 ${RELAY_CORP_REMOTE} 拉取最新代码..."
-    git fetch "$RELAY_CORP_REMOTE" --prune
-    git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
-    git pull --ff-only "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+    if git remote get-url "$RELAY_CORP_REMOTE" &>/dev/null; then
+      info "正在从 ${RELAY_CORP_REMOTE} 拉取最新代码..."
+      git fetch "$RELAY_CORP_REMOTE" --prune
+      git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+      git pull --ff-only "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+    else
+      git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+    fi
     info "推送主分支到 ${RELAY_RELAY_REMOTE}..."
     git push -u "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
     git push "$RELAY_RELAY_REMOTE" --tags
@@ -842,20 +849,24 @@ cmd_push_to_relay() {
 
   git rev-parse --git-dir &>/dev/null || die "当前目录不是 git 仓库"
 
-  info "从 ${RELAY_CORP_REMOTE} 拉取最新代码..."
-  git fetch "$RELAY_CORP_REMOTE" --prune
+  if git remote get-url "$RELAY_CORP_REMOTE" &>/dev/null; then
+    info "从 ${RELAY_CORP_REMOTE} 拉取最新代码..."
+    git fetch "$RELAY_CORP_REMOTE" --prune
 
-  info "切换到主分支 ${RELAY_BRANCH}..."
-  git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
+    info "切换到主分支 ${RELAY_BRANCH}..."
+    git switch "$RELAY_BRANCH" 2>/dev/null || git checkout "$RELAY_BRANCH"
 
-  info "fast-forward 合并 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}..."
-  git pull --ff-only "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+    info "fast-forward 合并 ${RELAY_CORP_REMOTE}/${RELAY_BRANCH}..."
+    git pull --ff-only "$RELAY_CORP_REMOTE" "$RELAY_BRANCH"
+  else
+    warn "未检测到 ${RELAY_CORP_REMOTE} 远端，跳过 fetch/pull，直接推送本地代码"
+  fi
 
   info "推送到 ${RELAY_RELAY_REMOTE}..."
   git push "$RELAY_RELAY_REMOTE" "$RELAY_BRANCH"
   git push "$RELAY_RELAY_REMOTE" --tags
 
-  success "公司代码已同步到外网裸仓库"
+  success "本地代码已推送到外网裸仓库"
   echo
   info "本地提交概览（最近 5 条）："
   git --no-pager log --oneline -5
