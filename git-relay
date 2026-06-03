@@ -1196,6 +1196,102 @@ cmd_status() {
   git --no-pager log --oneline --graph --decorate --all -10
 }
 
+# ── 交互菜单 ──────────────────────────────────────────────────────────────────
+cmd_menu() {
+  while true; do
+    echo
+    step "Git Relay 菜单"
+    echo
+    echo "  配置"
+    echo "   1) config        — 配置中转连接参数（首次必须先执行）"
+    echo "   2) config-show   — 显示当前配置"
+    echo
+    echo "  初始化"
+    echo "   3) init          — 完整初始化（服务器 + 本地）"
+    echo "   4) init-server   — 仅在外网服务器创建裸仓库"
+    echo "   5) init-local    — 仅在本地配置 remote 并首次推送"
+    echo
+    echo "  日常同步"
+    echo "   6) sync-to-relay    — 公司代码一步同步到外网服务器 ★"
+    echo "   7) push-to-relay    — 推送本地代码到裸仓库"
+    echo "   8) relay-pull       — 通知服务器拉取最新代码"
+    echo
+    echo "  功能分支"
+    echo "   9) feature-start    — 在服务器上创建功能分支"
+    echo "  10) relay-push       — 服务器推送分支到裸仓库"
+    echo "  11) pull-from-relay  — 本地从 relay 拉取分支"
+    echo "  12) relay-merge      — 合并分支并推回原始仓库"
+    echo "  13) sync-from-relay  — 服务器提交一键同步回公司 ★"
+    echo "  14) feature-clean    — 清理功能分支"
+    echo
+    echo "  其他"
+    echo "  15) status           — 显示仓库状态"
+    echo
+    echo "   0) 退出"
+    echo
+
+    local choice=""
+    read -r -p "$(echo -e "${_c_cyan}请选择 [0-15]${_c_reset}: ")" choice
+    echo
+
+    local _branch=""
+    case "$choice" in
+      1)  (cmd_config) || true ;;
+      2)  (cmd_config_show) || true ;;
+      3)  (cmd_init) || true ;;
+      4)  (cmd_init_server) || true ;;
+      5)  (cmd_init_local) || true ;;
+      6)  (cmd_sync_corp_to_relay) || true ;;
+      7)  (cmd_push_to_relay) || true ;;
+      8)
+          prompt_input_optional "分支名（直接回车使用主分支）" _branch
+          (cmd_server_pull "$_branch") || true
+          ;;
+      9)
+          prompt_input "功能分支名称" _branch
+          (cmd_feature_start "$_branch") || true
+          ;;
+      10)
+          prompt_input_optional "功能分支名称（直接回车推当前分支）" _branch
+          (cmd_feature_push "$_branch") || true
+          ;;
+      11)
+          prompt_input "功能分支名称" _branch
+          (cmd_feature_pull "$_branch") || true
+          ;;
+      12)
+          prompt_input "功能分支名称" _branch
+          (cmd_feature_merge "$_branch") || true
+          ;;
+      13)
+          prompt_input "功能分支名称" _branch
+          (cmd_sync_server_to_corp "$_branch") || true
+          ;;
+      14)
+          prompt_input "功能分支名称" _branch
+          (cmd_feature_clean "$_branch") || true
+          ;;
+      15) (cmd_status) || true ;;
+      0)
+          info "再见！"
+          return 0
+          ;;
+      "")
+          continue
+          ;;
+      *)
+          warn "无效选择「${choice}」，请输入 0-15"
+          continue
+          ;;
+    esac
+
+    echo
+    local _cont=""
+    read -r -p "$(echo -e "${_c_yellow}按 Enter 返回菜单，输入 q 退出${_c_reset}: ")" _cont
+    [[ "$_cont" == "q" || "$_cont" == "Q" ]] && { info "再见！"; return 0; }
+  done
+}
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 main() {
   local cmd="${1:-}"
@@ -1232,10 +1328,11 @@ EOF
     sync-to-relay)  shift; cmd_sync_corp_to_relay "$@" ;;
     sync-from-relay) shift; cmd_sync_server_to_corp "$@" ;;
     status)            shift; cmd_status "$@" ;;
+    menu)              shift; cmd_menu "$@" ;;
     --help|-h|help)    show_help ;;
     --version|-v)      echo "git-relay ${VERSION}" ;;
     "")
-      show_help
+      cmd_menu
       exit 0
       ;;
     *)
