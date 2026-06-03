@@ -81,6 +81,14 @@ _normalize_server_path() {
   printf '%s\n' "$raw_path"
 }
 
+_linux_home_dir() {
+  if [[ "${1:-}" == "root" ]]; then
+    printf '/root\n'
+  else
+    printf '/home/%s\n' "$1"
+  fi
+}
+
 _default_server_paths() {
   local server_os
   server_os="$(_normalize_server_os "${1:-linux}")"
@@ -88,14 +96,16 @@ _default_server_paths() {
   local project_name="$3"
 
   if [[ "$server_os" == "windows" ]]; then
-    printf 'BARE=/c/relay/repos/%s.git\n' "$project_name"
-    printf 'WORK=/c/relay/worktrees/%s\n' "$project_name"
+    printf 'BARE=/c/Users/Administrator/WorkSpace/repos/%s.git\n' "$project_name"
+    printf 'WORK=/c/Users/Administrator/WorkSpace/project/%s\n' "$project_name"
     return
   fi
 
   if [[ -n "$server_user" ]]; then
-    printf 'BARE=/home/%s/relay/repos/%s.git\n' "$server_user" "$project_name"
-    printf 'WORK=/home/%s/relay/worktrees/%s\n' "$server_user" "$project_name"
+    local home_dir
+    home_dir="$(_linux_home_dir "$server_user")"
+    printf 'BARE=%s/workspace/repos/%s.git\n' "$home_dir" "$project_name"
+    printf 'WORK=%s/workspace/project/%s\n' "$home_dir" "$project_name"
   fi
 }
 
@@ -403,8 +413,8 @@ load_conf() {
 
   local _default_bare="" _default_work=""
   if [[ "$RELAY_SERVER_OS" == "windows" ]]; then
-    _default_bare="/c/relay/repos/${RELAY_PROJECT}.git"
-    _default_work="/c/relay/worktrees/${RELAY_PROJECT}"
+    _default_bare="/c/Users/Administrator/WorkSpace/repos/${RELAY_PROJECT}.git"
+    _default_work="/c/Users/Administrator/WorkSpace/project/${RELAY_PROJECT}"
   elif [[ -z "$_custom_bare" || -z "$_custom_work" ]]; then
     # Linux 模式缺少自定义路径时，仍然按原有逻辑用用户名派生默认路径
     local _path_user="$RELAY_SERVER_USER"
@@ -413,8 +423,10 @@ load_conf() {
       _path_user="$(ssh "$RELAY_SSH_TARGET" 'whoami' 2>/dev/null)" || \
         die "无法获取服务器用户名，请配置 server_user 或显式指定 server_bare_path / server_work_path"
     fi
-    _default_bare="/home/${_path_user}/relay/repos/${RELAY_PROJECT}.git"
-    _default_work="/home/${_path_user}/relay/worktrees/${RELAY_PROJECT}"
+    local _home_dir
+    _home_dir="$(_linux_home_dir "$_path_user")"
+    _default_bare="${_home_dir}/workspace/repos/${RELAY_PROJECT}.git"
+    _default_work="${_home_dir}/workspace/project/${RELAY_PROJECT}"
   fi
 
   RELAY_BARE_PATH="$(_normalize_server_path "$RELAY_SERVER_OS" "${_custom_bare:-$_default_bare}")"
@@ -560,11 +572,13 @@ cmd_config() {
   # 服务器路径：计算默认值供展示，允许用户覆盖
   local _def_bare="" _def_work=""
   if [[ "$v_os" == "windows" ]]; then
-    _def_bare="/c/relay/repos/${v_project}.git"
-    _def_work="/c/relay/worktrees/${v_project}"
+    _def_bare="/c/Users/Administrator/WorkSpace/repos/${v_project}.git"
+    _def_work="/c/Users/Administrator/WorkSpace/project/${v_project}"
   else
-    _def_bare="/home/${v_user}/relay/repos/${v_project}.git"
-    _def_work="/home/${v_user}/relay/worktrees/${v_project}"
+    local _def_home
+    _def_home="$(_linux_home_dir "$v_user")"
+    _def_bare="${_def_home}/workspace/repos/${v_project}.git"
+    _def_work="${_def_home}/workspace/project/${v_project}"
   fi
   local cur_bare cur_work
   cur_bare="$(_normalize_server_path "$v_os" "$(conf_get server_bare_path 2>/dev/null || echo "$_def_bare")")"
@@ -640,8 +654,10 @@ cmd_config() {
     conf_set server_work_path "$v_work_path"
   else
     # Linux 保持原有行为：默认路径不额外写入配置文件
-    local _save_def_bare="/home/${v_user}/relay/repos/${v_project}.git"
-    local _save_def_work="/home/${v_user}/relay/worktrees/${v_project}"
+    local _save_home
+    _save_home="$(_linux_home_dir "$v_user")"
+    local _save_def_bare="${_save_home}/workspace/repos/${v_project}.git"
+    local _save_def_work="${_save_home}/workspace/project/${v_project}"
     if [[ "$v_bare_path" != "$_save_def_bare" ]]; then
       conf_set server_bare_path "$v_bare_path"
     fi
