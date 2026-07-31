@@ -53,6 +53,7 @@ run_selected_tests() {
     test_build_windows_init_script_skips_chmod
     test_load_conf_normalizes_windows_paths_and_url
     test_config_writes_windows_defaults
+    test_menu_init_loads_project_config_after_config
     test_init_server_script_contains_linux_chmod
   )
 
@@ -179,6 +180,20 @@ test_config_writes_windows_defaults() {
   assert_contains "config 写入 server_os" "server_os=windows" "$content"
   assert_contains "config 写入 windows 裸仓库默认路径" "server_bare_path=/c/relay/repos/demo.git" "$content"
   assert_contains "config 写入 windows 工作区默认路径" "server_work_path=/c/relay/worktrees/demo" "$content"
+  teardown_test_home
+}
+
+test_menu_init_loads_project_config_after_config() {
+  setup_test_home
+  local repo_dir="$TEST_HOME/repo"
+  mkdir -p "$repo_dir"
+  git -C "$repo_dir" init >/dev/null
+
+  local output
+  output="$(printf '1\n1\nrelay-win\nwindows\ngitrelay\n22\ndemo\nmain\norigin\nrelay\n\n\n\n\n3\nn\nq\n' \
+    | (cd "$repo_dir" && "$GIT_RELAY" menu) 2>&1 || true)"
+
+  assert_contains "菜单配置后 init 能加载项目级配置" "本命令将依次执行" "$output"
   teardown_test_home
 }
 
